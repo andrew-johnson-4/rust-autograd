@@ -2,11 +2,6 @@ language: rust
 
 env: TYPE=default RUST_BACKTRACE=1
 
-addons:
-  apt:
-    packages:
-      - gfortran
-
 rust:
   - "1.38.0"
   - stable
@@ -15,6 +10,14 @@ rust:
 os:
   - linux
   - osx
+
+before_install:
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew upgrade gcc > /dev/null; fi
+
+addons:
+  apt:
+    packages:
+      - gfortran
 
 sudo: false
 
