@@ -1,7 +1,7 @@
 use crate::ndarray_ext::{NdArray, NdArrayView};
 use crate::op;
 #[cfg(feature = "mkl")]
-use crate::ops::mkl_ffi::*;
+use crate::ops::blas_ffi::*;
 #[cfg(feature = "mkl")]
 use crate::same_type;
 use crate::tensor::Tensor;
@@ -94,9 +94,10 @@ pub fn softmax_impl<T: Float>(x: &NdArrayView<T>, axis: isize) -> NdArray<T> {
 }
 
 impl<T: Float> op::Op<T> for Softmax {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret = softmax_impl(&ctx.input(0), self.axis);
-        ctx.append_output(ret)
+        ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -109,9 +110,10 @@ impl<T: Float> op::Op<T> for Softmax {
 }
 
 impl<T: Float> op::Op<T> for Softplus {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret = ctx.input(0).map(move |a| (a.exp() + T::one()).ln());
-        ctx.append_output(ret)
+        ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -125,7 +127,7 @@ impl<T: Float> op::Op<T> for Softplus {
 }
 
 impl<T: Float> op::Op<T> for Sigmoid {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret;
         #[cfg(feature = "mkl")]
         {
@@ -138,7 +140,8 @@ impl<T: Float> op::Op<T> for Sigmoid {
                 .input(0)
                 .mapv(move |a| ((a * half).tanh() * half) + half);
         }
-        ctx.append_output(ret)
+        ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -149,9 +152,10 @@ impl<T: Float> op::Op<T> for Sigmoid {
 }
 
 impl<T: Float> op::Op<T> for ReLU {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret = ctx.input(0).map(|a| a.max(T::zero()));
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -163,10 +167,11 @@ impl<T: Float> op::Op<T> for ReLU {
 }
 
 impl<T: Float> op::Op<T> for Identity {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         // do nothing
         let ret = ctx.input(0);
-        ctx.append_output_view(ret)
+        ctx.append_output_view(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -177,7 +182,7 @@ impl<T: Float> op::Op<T> for Identity {
 }
 
 impl<T: Float> op::Op<T> for ELU<T> {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret = ctx.input(0).mapv(move |a| {
             if a > T::zero() {
                 a
@@ -185,13 +190,15 @@ impl<T: Float> op::Op<T> for ELU<T> {
                 self.alpha * (a.exp() - T::one())
             }
         });
-        ctx.append_output(ret)
+        ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
         let gy = &ctx.output_grad();
-        let gx = Tensor::builder()
-            .set_ro_inputs(&[&ctx.input(0), gy])
+        let gx = Tensor::builder(ctx.graph())
+            .append_input(ctx.input(0), false)
+            .append_input(gy, false)
             .set_shape(&ctx.graph().shape(gy))
             .build(ctx.graph(), ELUGrad { alpha: self.alpha });
         ctx.append_input_grad(Some(gx))
@@ -199,7 +206,7 @@ impl<T: Float> op::Op<T> for ELU<T> {
 }
 
 impl<T: Float> op::Op<T> for ELUGrad<T> {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = &ctx.input(0);
         let a = x.mapv(move |a| {
             if a > T::zero() {
@@ -209,7 +216,8 @@ impl<T: Float> op::Op<T> for ELUGrad<T> {
             }
         });
         let ret = a * &ctx.input(1);
-        ctx.append_output(ret)
+        ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {

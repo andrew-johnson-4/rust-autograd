@@ -1,12 +1,12 @@
 use crate::ndarray_ext::{NdArray, NdArrayView};
 use crate::op;
-#[cfg(feature = "mkl")]
-use crate::ops::mkl_ffi::*;
-#[cfg(feature = "mkl")]
+#[cfg(feature = "intel-mkl")]
+use crate::ops::blas_ffi::*;
+#[cfg(feature = "intel-mkl")]
 use crate::same_type;
 use crate::tensor::Tensor;
 use crate::Float;
-use crate::Graph;
+use crate::GraphRepr;
 use ndarray;
 use ndarray::Zip;
 
@@ -86,7 +86,10 @@ macro_rules! impl_cmp_op {
         pub struct $struct_name;
 
         impl<T: Float> op::Op<T> for $struct_name {
-            fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+            fn compute(
+                &self,
+                ctx: &mut crate::op::ComputeContext<T>,
+            ) -> Result<(), crate::op::OpError> {
                 let x0 = ctx.input(0);
                 let x1 = &ctx.input(1);
                 let shape0 = x0.shape();
@@ -153,6 +156,7 @@ macro_rules! impl_cmp_op {
                 };
 
                 ctx.append_output(ret);
+                Ok(())
             }
 
             fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -184,7 +188,7 @@ fn none_grad<'g, T: Float>(
     _: Tensor<'g, T>,
     _: Tensor<'g, T>,
     _: Tensor<'g, T>,
-    _: &'g Graph<T>,
+    _: &'g GraphRepr<T>,
     ctx: &mut crate::op::GradientContext<T>,
 ) {
     ctx.append_input_grad(None);
@@ -196,7 +200,7 @@ fn min_max_grad<'g, T: Float>(
     x1: Tensor<'g, T>,
     x2: Tensor<'g, T>,
     y: Tensor<'g, T>,
-    c: &'g Graph<T>,
+    c: &'g GraphRepr<T>,
     ctx: &mut crate::op::GradientContext<'g, T>,
 ) {
     let selected_a = c.equal(x1, y);
@@ -205,7 +209,7 @@ fn min_max_grad<'g, T: Float>(
     ctx.append_input_grad(Some(c.mul(selected_b, gy)));
 }
 
-#[cfg(feature = "mkl")]
+#[cfg(feature = "intel-mkl")]
 macro_rules! elem_wise_vm_or_std {
     ($vms_op:ident, $vmd_op:ident, $closure:expr, $ctx:expr) => {
         let x = $ctx.input(0);
@@ -236,7 +240,7 @@ macro_rules! elem_wise_vm_or_std {
     };
 }
 
-#[cfg(feature = "mkl")]
+#[cfg(feature = "intel-mkl")]
 macro_rules! elem_wise_vm_with_param_or_std {
     ($vms_op:ident, $vmd_op:ident, $std_name:ident, $param:expr, $ctx:expr) => {
         let x = $ctx.input(0);
@@ -272,16 +276,17 @@ macro_rules! elem_wise_vm_with_param_or_std {
 }
 
 impl<T: Float> op::Op<T> for Abs {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsAbs, vdAbs, |a| a.abs(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.abs());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -290,9 +295,10 @@ impl<T: Float> op::Op<T> for Abs {
 }
 
 impl<T: Float> op::Op<T> for NegOp {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret = ctx.input(0).map(|x| x.neg());
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -301,16 +307,17 @@ impl<T: Float> op::Op<T> for NegOp {
 }
 
 impl<T: Float> op::Op<T> for Square {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsSqr, vdSqr, |a| a * a, ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).mapv(|a| a * a);
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -320,16 +327,17 @@ impl<T: Float> op::Op<T> for Square {
 }
 
 impl<T: Float> op::Op<T> for Inv {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsInv, vdInv, |a| a.recip(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.recip());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -340,16 +348,17 @@ impl<T: Float> op::Op<T> for Inv {
 }
 
 impl<T: Float> op::Op<T> for InvSqrt {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsInvSqrt, vdInvSqrt, |a| a.sqrt().recip(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.sqrt().recip());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -361,7 +370,7 @@ impl<T: Float> op::Op<T> for InvSqrt {
 }
 
 impl<T: Float> op::Op<T> for Sign {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret = ctx.input(0).mapv(|x| {
             if x == T::zero() {
                 T::zero()
@@ -370,6 +379,7 @@ impl<T: Float> op::Op<T> for Sign {
             }
         });
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -378,16 +388,17 @@ impl<T: Float> op::Op<T> for Sign {
 }
 
 impl<T: Float> op::Op<T> for Floor {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsFloor, vdFloor, |a| a.floor(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.floor());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -396,16 +407,17 @@ impl<T: Float> op::Op<T> for Floor {
 }
 
 impl<T: Float> op::Op<T> for Ceil {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsCeil, vdCeil, |a| a.ceil(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.ceil());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -414,15 +426,14 @@ impl<T: Float> op::Op<T> for Ceil {
 }
 
 impl<T: Float> op::Op<T> for Transpose {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let perm = &ctx.input(1);
         let perm_len = perm.len();
         let x = ctx.input(0);
         if x.ndim() != perm_len {
-            ctx.set_error(op::OpError::IncompatibleShape(
+            return Err(op::OpError::IncompatibleShape(
                 "transpose: inputs's ndim and axes's length must match".to_string(),
             ));
-            return;
         }
 
         let ret = unsafe {
@@ -440,11 +451,13 @@ impl<T: Float> op::Op<T> for Transpose {
         };
 
         ctx.append_output_view(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
-        let gx = Tensor::builder()
-            .set_ro_inputs(&[&ctx.output_grad(), &ctx.input(1)])
+        let gx = Tensor::builder(ctx.graph())
+            .append_input(&ctx.output_grad(), false)
+            .append_input(&ctx.input(1), false)
             .set_shape(&ctx.graph().shape(&ctx.input(0)))
             .build(
                 ctx.graph(),
@@ -457,7 +470,7 @@ impl<T: Float> op::Op<T> for Transpose {
     }
 }
 
-#[cfg(feature = "mkl")]
+#[cfg(feature = "intel-mkl")]
 pub(crate) fn inplace_add_impl<F: Float>(mut a: NdArray<F>, b: &NdArray<F>) -> NdArray<F> {
     unsafe {
         if same_type::<F, f32>() {
@@ -483,7 +496,7 @@ pub(crate) fn inplace_add_impl<F: Float>(mut a: NdArray<F>, b: &NdArray<F>) -> N
     a
 }
 
-#[cfg(feature = "mkl")]
+#[cfg(feature = "intel-mkl")]
 pub(crate) fn fast_inplace_exp_impl<F: Float>(x: &mut NdArray<F>) {
     unsafe {
         if same_type::<F, f32>() {
@@ -506,7 +519,7 @@ pub(crate) fn fast_inplace_exp_impl<F: Float>(x: &mut NdArray<F>) {
     }
 }
 
-#[cfg(feature = "mkl")]
+#[cfg(feature = "intel-mkl")]
 pub(crate) fn fast_inplace_ln_impl<F: Float>(x: &mut NdArray<F>) {
     unsafe {
         if same_type::<F, f32>() {
@@ -554,11 +567,11 @@ pub fn logsumexp_forward<T: Float>(x: &NdArrayView<T>, axis: isize, keep_dims: b
     let exp = {
         // subtract `max` to prevent overflow of exp
         let mut tmp = x - max;
-        #[cfg(feature = "mkl")]
+        #[cfg(feature = "intel-mkl")]
         {
             fast_inplace_exp_impl(&mut tmp);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             tmp.mapv_inplace(move |a| a.exp());
         }
@@ -571,12 +584,12 @@ pub fn logsumexp_forward<T: Float>(x: &NdArrayView<T>, axis: isize, keep_dims: b
         .into_shape(ndarray::IxDyn(reduced_shape))
         .unwrap();
 
-    #[cfg(feature = "mkl")]
+    #[cfg(feature = "intel-mkl")]
     {
         fast_inplace_ln_impl(&mut sum);
         inplace_add_impl(sum, max)
     }
-    #[cfg(not(feature = "mkl"))]
+    #[cfg(not(feature = "intel-mkl"))]
     {
         sum.mapv_inplace(move |a| a.ln());
         sum += max;
@@ -585,9 +598,10 @@ pub fn logsumexp_forward<T: Float>(x: &NdArrayView<T>, axis: isize, keep_dims: b
 }
 
 impl<T: Float> op::Op<T> for LogSumExp {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret = logsumexp_forward(&ctx.input(0), self.axis, self.keep_dims);
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -600,16 +614,17 @@ impl<T: Float> op::Op<T> for LogSumExp {
 }
 
 impl<T: Float> op::Op<T> for Pow<T> {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_with_param_or_std!(vsPowx, vdPowx, powf, self.a, ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.powf(self.a));
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -621,16 +636,17 @@ impl<T: Float> op::Op<T> for Pow<T> {
 }
 
 impl<T: Float> op::Op<T> for Sqrt {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsSqrt, vdSqrt, |a| a.sqrt(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.sqrt());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -642,16 +658,17 @@ impl<T: Float> op::Op<T> for Sqrt {
 }
 
 impl<T: Float> op::Op<T> for Log10 {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsLog10, vdLog10, |a| a.log10(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.log10());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -661,16 +678,17 @@ impl<T: Float> op::Op<T> for Log10 {
 }
 
 impl<T: Float> op::Op<T> for Log2 {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsLog2, vdLog2, |a| a.log2(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.log2());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -680,16 +698,17 @@ impl<T: Float> op::Op<T> for Log2 {
 }
 
 impl<T: Float> op::Op<T> for Ln {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsLn, vdLn, |a| a.ln(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.ln());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -698,16 +717,17 @@ impl<T: Float> op::Op<T> for Ln {
 }
 
 impl<T: Float> op::Op<T> for Exp {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsExp, vdExp, |a| a.exp(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.exp());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -716,16 +736,17 @@ impl<T: Float> op::Op<T> for Exp {
 }
 
 impl<T: Float> op::Op<T> for Exp2 {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsExp2, vdExp2, |a| a.exp2(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.exp2());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -737,17 +758,18 @@ impl<T: Float> op::Op<T> for Exp2 {
 }
 
 impl<T: Float> op::Op<T> for Exp10 {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let _10 = T::from(10).unwrap();
-        #[cfg(feature = "mkl")]
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsExp10, vdExp10, |a| _10.powf(a), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(move |&a| _10.powf(a));
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -757,16 +779,17 @@ impl<T: Float> op::Op<T> for Exp10 {
 }
 
 impl<T: Float> op::Op<T> for Atanh {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsAtanh, vdAtanh, |a| a.atanh(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.atanh());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -778,16 +801,17 @@ impl<T: Float> op::Op<T> for Atanh {
 }
 
 impl<T: Float> op::Op<T> for Acosh {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsAcosh, vdAcosh, |a| a.acosh(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.acosh());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -799,16 +823,17 @@ impl<T: Float> op::Op<T> for Acosh {
 }
 
 impl<T: Float> op::Op<T> for Asinh {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsAsinh, vdAsinh, |a| a.asinh(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.asinh());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -820,16 +845,17 @@ impl<T: Float> op::Op<T> for Asinh {
 }
 
 impl<T: Float> op::Op<T> for Tanh {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsTanh, vdTanh, |a| a.tanh(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.tanh());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -840,16 +866,17 @@ impl<T: Float> op::Op<T> for Tanh {
 }
 
 impl<T: Float> op::Op<T> for Cosh {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsCosh, vdCosh, |a| a.cosh(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.cosh());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -858,16 +885,17 @@ impl<T: Float> op::Op<T> for Cosh {
 }
 
 impl<T: Float> op::Op<T> for Sinh {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsSinh, vdSinh, |a| a.sinh(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.sinh());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -876,16 +904,17 @@ impl<T: Float> op::Op<T> for Sinh {
 }
 
 impl<T: Float> op::Op<T> for Atan {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsAtan, vdAtan, |a| a.atan(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.atan());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -897,16 +926,17 @@ impl<T: Float> op::Op<T> for Atan {
 }
 
 impl<T: Float> op::Op<T> for Acos {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsAcos, vdAcos, |a| a.acos(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.acos());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -918,16 +948,17 @@ impl<T: Float> op::Op<T> for Acos {
 }
 
 impl<T: Float> op::Op<T> for Asin {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsAsin, vdAsin, |a| a.asin(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.asin());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -939,16 +970,17 @@ impl<T: Float> op::Op<T> for Asin {
 }
 
 impl<T: Float> op::Op<T> for Sin {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsSin, vdSin, |a| a.sin(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.sin());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -957,16 +989,17 @@ impl<T: Float> op::Op<T> for Sin {
 }
 
 impl<T: Float> op::Op<T> for Cos {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsCos, vdCos, |a| a.cos(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.cos());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -976,16 +1009,17 @@ impl<T: Float> op::Op<T> for Cos {
 }
 
 impl<T: Float> op::Op<T> for Tan {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        #[cfg(feature = "mkl")]
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        #[cfg(feature = "intel-mkl")]
         {
             elem_wise_vm_or_std!(vsTan, vdTan, |a| a.tan(), ctx);
         }
-        #[cfg(not(feature = "mkl"))]
+        #[cfg(not(feature = "intel-mkl"))]
         {
             let ret = ctx.input(0).map(|a| a.tan());
             ctx.append_output(ret);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {

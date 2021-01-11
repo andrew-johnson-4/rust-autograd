@@ -14,13 +14,13 @@
 //! ```rust
 //! use autograd as ag;
 //!
-//! ag::with(|g: &mut ag::Graph<_>| {
+//! ag::run(|g: &mut ag::Graph<_>| {
 //!     let a: ag::Tensor<f32> = g.ones(&[60]);
 //!     let b: ag::Tensor<f32> = g.ones(&[24]);
 //!     let c: ag::Tensor<f32> = g.reshape(a, &[3, 4, 5]);
 //!     let d: ag::Tensor<f32> = g.reshape(b, &[4, 3, 2]);
 //!     let e: ag::Tensor<f32> = g.tensordot(c, d, &[1, 0], &[0, 1]);
-//!     let result: ag::ndarray::Array<_, _> = e.eval(&[]).unwrap();  // Getting `ndarray::Array` here.
+//!     let result: ag::ndarray::Array<_, _> = e.eval(&[], g).unwrap();  // Getting `ndarray::Array` here.
 //! });
 //! ```
 //!
@@ -35,22 +35,22 @@
 //! use autograd as ag;
 //!
 //! # fn main() {
-//! ag::with(|g: &mut ag::Graph<_>| {
+//! ag::run(|g: &mut ag::Graph<_>| {
 //!     let x = g.placeholder(&[]);
 //!     let y = g.placeholder(&[]);
 //!     let z = 2.*x*x + 3.*y + 1.;
 //!
 //!     // dz/dy
 //!     let gy = &g.grad(&[z], &[y])[0];
-//!     println!("{:?}", gy.eval(&[]));   // => Ok(3.)
+//!     println!("{:?}", gy.eval(&[], g));   // => Ok(3.)
 //!
 //!     // dz/dx (requires to fill the placeholder `x`)
 //!     let gx = &g.grad(&[z], &[x])[0];
 //!     let feed = ag::ndarray::arr0(2.);
-//!     println!("{:?}", gx.eval(&[x.given(feed.view())]));  // => Ok(8.)
+//!     println!("{:?}", gx.eval(&[x.given(feed.view())], g));  // => Ok(8.)
 //!     // ddz/dx (differentiates `z` again)
 //!     let ggx = &g.grad(&[gx], &[x])[0];
-//!     println!("{:?}", ggx.eval(&[]));  // => Ok(4.)
+//!     println!("{:?}", ggx.eval(&[], g));  // => Ok(4.)
 //! });
 //! # }
 //! ```
@@ -61,26 +61,32 @@
 //! ```rust
 //! // This is a softmax regression for MNIST digits classification with Adam.
 //! // This achieves 0.918 test accuracy after 3 epochs (0.11 sec/epoch on 2.7GHz Intel Core i5).
-//! use autograd::{self as ag, Graph, optimizers::adam, ndarray_ext as arr, tensor::Variable};
+//! use autograd::{self as ag, optimizers::adam::Adam, variable::NamespaceTrait};
+//!
+//! let mut env = ag::VariableEnvironment::new();
 //!
 //! let rng = ag::ndarray_ext::ArrayRng::<f32>::default();
-//! let w_arr = arr::into_shared(rng.glorot_uniform(&[28 * 28, 10]));
-//! let b_arr = arr::into_shared(arr::zeros(&[1, 10]));
-//! let adam_state = adam::AdamState::new(&[&w_arr, &b_arr]);
+//!
+//! // Register variables in this env.
+//! // `with_name(name)` is optional but enables variable lookup using the name.
+//! let w = env.slot().with_name("w").set(rng.glorot_uniform(&[28 * 28, 10]));
+//! let b = env.slot().with_name("b").set(ag::ndarray_ext::zeros(&[1, 10]));
+//!
+//! let adam = Adam::default("my_adam", env.default_namespace().current_var_ids(), &mut env);
 //!
 //! let max_epoch = 3;
 //!
 //! for epoch in 0..max_epoch {
-//!     ag::with(|g| {
-//!         let w = g.variable(w_arr.clone());
-//!         let b = g.variable(b_arr.clone());
+//!     env.run(|g| {
+//!         let ns = g.env().default_namespace();
+//!         let var = g.variable_map_by_name(&ns);
 //!         let x = g.placeholder(&[-1, 28*28]);
 //!         let y = g.placeholder(&[-1]);
-//!         let z = g.matmul(x, w) + b;
+//!         let z = g.matmul(x, var["w"]) + var["b"];
 //!         let mean_loss = g.reduce_mean(g.sparse_softmax_cross_entropy(z, &y), &[0], false);
-//!         let grads = &g.grad(&[&mean_loss], &[w, b]);
-//!         let update_ops: &[ag::Tensor<f32>] =
-//!             &adam::Adam::default().compute_updates(&[w, b], grads, &adam_state, g);
+//!         let grads = &g.grad(&[&mean_loss], &[var["w"], var["b"]]);
+//!         let updates: &[ag::Tensor<f32>] =
+//!             &adam.update(&[var["w"], var["b"]], grads, g);
 //!
 //!         // let batch_size = 200isize;
 //!         // let num_samples = x_train.shape()[0];
@@ -101,12 +107,12 @@
 //! ```rust
 //! use autograd as ag;
 //!
-//! ag::with(|g| {
+//! ag::run(|g| {
 //!     let a: ag::Tensor<f32> = g.zeros(&[4, 2]).show();
 //!     let b: ag::Tensor<f32> = g.ones(&[2, 3]).show_shape();
 //!     let c = g.matmul(a, b).show_with("MatMul:");
 //!
-//!     c.eval(&[]);
+//!     c.eval(&[], g);
 //!     // [[0.0, 0.0],
 //!     // [0.0, 0.0],
 //!     // [0.0, 0.0],
@@ -128,10 +134,20 @@
 #[macro_use(s)]
 /// re-exported for convenience and version-compatibility
 pub extern crate ndarray;
-#[cfg(feature = "mkl")]
+
+// For intel MKL
+#[cfg(all(feature = "blas", feature = "intel-mkl"))]
 extern crate intel_mkl_src;
+#[cfg(all(feature = "blas", feature = "intel-mkl"))]
+extern crate intel_mkl_sys;
+
+// For other blas impl
+#[cfg(all(feature = "blas", not(feature = "intel-mkl")))]
+extern crate blas_src;
+#[cfg(all(feature = "blas", not(feature = "intel-mkl")))]
+extern crate cblas_sys;
+
 extern crate libc;
-#[cfg(not(feature = "mkl"))]
 extern crate matrixmultiply;
 extern crate num;
 extern crate num_traits;
@@ -141,26 +157,25 @@ extern crate rand_distr;
 extern crate rayon;
 extern crate rustc_hash;
 pub(crate) extern crate smallvec;
+extern crate uuid;
 
 mod gradient;
 pub(crate) mod graph;
 mod hook;
 pub mod ndarray_ext;
 pub mod op;
-mod ops;
+pub mod ops;
+pub mod variable;
+pub use ops as tensor_ops;
 pub mod optimizers;
 mod runtime;
 pub mod tensor;
 pub mod test_helper;
+pub use variable::VariableEnvironment;
 
-use rustc_hash::FxHasher;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::any::TypeId;
-use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::hash::BuildHasherDefault;
-
-pub(crate) type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
-pub(crate) type FxHashSet<K> = HashSet<K, BuildHasherDefault<FxHasher>>;
 
 /// Primitive type in this crate, which is actually a decorated `num_traits::Float`.
 pub trait Float:
@@ -232,18 +247,13 @@ pub use crate::tensor::Tensor;
 
 pub(crate) use crate::ndarray_ext::ArrRepr;
 
-pub use crate::graph::{run, with, Graph};
+pub use crate::graph::{run, with, Graph, GraphRepr};
 
 /// Error during tensor's evaluation.
 #[derive(Debug, PartialEq)]
 pub enum EvalError {
     /// Error during `Op`'s computation.
     OpError(op::OpError),
-    /// A value of tensor is empty.
-    ///
-    /// For example, compute results of inplace ops (e.g. optimizers) are not available
-    /// and are represented as `Empty`.
-    Empty,
 }
 
 impl std::error::Error for EvalError {}
@@ -252,7 +262,6 @@ impl fmt::Display for EvalError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             EvalError::OpError(e) => e.fmt(f),
-            EvalError::Empty => write!(f, "Empty return value from a stateful op"),
         }
     }
 }

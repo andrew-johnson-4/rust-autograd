@@ -2,10 +2,10 @@ use crate::ndarray_ext::{NdArray, NdArrayView};
 use crate::op::{self, ComputeContext, InputArray, OpInput};
 use crate::smallvec::SmallVec;
 use crate::tensor::{Tensor, TensorInternal};
-use crate::FxHashMap;
-use crate::{Float, Graph};
-use std::cell::UnsafeCell;
-use std::sync::{RwLockReadGuard, RwLockWriteGuard};
+use crate::variable::VariableID;
+use crate::{Float, GraphRepr};
+use crate::{FxHashMap, Graph, VariableEnvironment};
+use std::cell::{Ref, RefMut, UnsafeCell};
 
 const NUM_MAX_EVAL_BUF: usize = 8;
 
@@ -35,16 +35,18 @@ type EvalBuf<T> = SmallVec<[T; NUM_MAX_EVAL_BUF]>;
 ///        .run();  // Do eval
 ///    });
 /// ```
-pub struct Eval<'view, 'feed, 'graph, F: Float> {
-    scope: &'graph Graph<F>,
+pub struct Eval<'view, 'feed, 'graph, 'e, 'n, 'c, F: Float> {
+    scope: &'c Graph<'e, 'n, F>,
     buf: EvalBuf<Tensor<'graph, F>>,
     feeds: Option<&'feed [crate::runtime::Feed<'view, F>]>,
 }
 
-impl<'feed, 'tensor, 'view, 'graph, F: Float> Eval<'view, 'feed, 'graph, F> {
+impl<'feed, 'tensor, 'view, 'graph, 'e, 'n, 'c, F: Float>
+    Eval<'view, 'feed, 'graph, 'e, 'n, 'c, F>
+{
     #[inline]
     /// Instantiates a new evaluation session.
-    pub fn new(scope: &'graph Graph<F>) -> Self {
+    pub fn new(scope: &'c Graph<'e, 'n, F>) -> Self {
         Eval {
             feeds: None,
             scope,
@@ -95,13 +97,15 @@ impl<'feed, 'tensor, 'view, 'graph, F: Float> Eval<'view, 'feed, 'graph, F> {
 /// use ndarray::array;
 /// use autograd as ag;
 ///
-/// ag::with(|g| {
+/// let mut env = ag::VariableEnvironment::new();
+///
+/// env.run(|g| {
 ///     let x = g.placeholder(&[2]);
 ///
 ///     // Fills the placeholder with an ArrayView, then eval.
 ///     let value = array![1., 1.];
 ///     let feed: ag::Feed<_> = x.given(value.view());
-///     x.eval(&[feed]);
+///     x.eval(&[feed], g);
 /// });
 /// ```
 pub struct Feed<'feed, T: Float> {
@@ -124,7 +128,6 @@ impl<'feed, F: Float> Feed<'feed, F> {
 enum ValueType {
     Owned,
     View,
-    Empty,
 }
 
 #[derive(Copy, Clone)]
@@ -143,7 +146,7 @@ impl ValueInfo {
 
 struct OutputStorage<'view, F: Float> {
     // - storage itself is not shared between threads
-    // - items in the storage never gone while evaluation loop.
+    // - items in the storage never gone while evaluation loop (NdArray's relocation is shallow copy).
     inner: UnsafeCell<OutputStorageInner<'view, F>>,
 }
 
@@ -154,7 +157,7 @@ struct OutputStorageInner<'view, F: Float> {
     view_storage: Vec<NdArrayView<'view, F>>,
 }
 
-impl<'tensor, 'view, 'lock, F: Float> OutputStorage<'view, F> {
+impl<'view, F: Float> OutputStorage<'view, F> {
     #[inline]
     fn new() -> Self {
         OutputStorage {
@@ -211,21 +214,14 @@ impl<'tensor, 'view, 'lock, F: Float> OutputStorage<'view, F> {
     }
 
     #[inline]
-    fn get(&'view self, node: &TensorInternal<F>, vi: ValueInfo) -> NdArrayView<'view, F> {
+    fn get(&'view self, vi: ValueInfo) -> NdArrayView<'view, F> {
         match vi.ty {
             ValueType::Owned => self.get_from_owned(vi.key),
             ValueType::View => self.get_from_view(vi.key),
-            ValueType::Empty => {
-                panic!(
-                    "Attempting to use {}'s output which is empty.",
-                    node.get_op().name()
-                );
-            }
         }
     }
 }
 
-#[inline]
 // search the feed using `in_node_id`
 fn retrieve_feed<'feeds, 'feed, F: Float>(
     feeds: &'feeds [Feed<'feed, F>],
@@ -242,89 +238,32 @@ fn retrieve_feed<'feeds, 'feed, F: Float>(
 
 // Extract output arrays from `results` and stores into `storage`.
 fn install_compute_results<'view, F: Float>(
-    results: crate::op::Results<'view, F>,
+    ys: Result<op::OutputArray<crate::ArrRepr<'view, F>>, op::OpError>,
     storage: &OutputStorage<'view, F>,
 ) -> Result<op::OutputArray<ValueInfo>, op::OpError> {
     let mut value_info_list = op::OutputArray::new();
-    for y in results {
-        match y {
-            Some(Ok(crate::ArrRepr::Owned(val))) => {
-                let key = storage.push_owned(val);
-                value_info_list.push(ValueInfo::new(ValueType::Owned, key));
+    match ys {
+        Ok(ys) => {
+            debug_assert!(!ys.is_empty(), "Bad op implementation: empty return value");
+            for y in ys {
+                match y {
+                    crate::ArrRepr::Owned(val) => {
+                        let key = storage.push_owned(val);
+                        value_info_list.push(ValueInfo::new(ValueType::Owned, key));
+                    }
+                    crate::ArrRepr::View(val) => {
+                        let key = storage.push_view(val);
+                        value_info_list.push(ValueInfo::new(ValueType::View, key));
+                    }
+                };
             }
-            Some(Ok(crate::ArrRepr::View(val))) => {
-                let key = storage.push_view(val);
-                value_info_list.push(ValueInfo::new(ValueType::View, key));
-            }
-            Some(Err(e)) => {
-                return Err(e);
-            }
-            None => {
-                value_info_list.push(ValueInfo::new(ValueType::Empty, /*dummy = */ 0))
-            }
-        };
-    }
-    Ok(value_info_list)
-}
-
-// aggregated ones are pushed in `input_values`.
-// input's status is returned.
-#[inline]
-fn aggregate_op_inputs<'ret, 'tensor: 'ret, 'slice: 'ret, 'feed: 'slice, F: Float>(
-    node: &'tensor TensorInternal<F>,
-    g: &Graph<F>,
-    node_info_map: &FxHashMap<usize, Result<op::OutputArray<ValueInfo>, op::OpError>>,
-    feeds: &'slice [Feed<'feed, F>],
-    storage: &'ret OutputStorage<'ret, F>,
-    input_values: &mut InputArray<OpInput<'ret, F>>, // target
-    read_guards: &mut InputArray<RwLockReadGuard<'tensor, NdArray<F>>>, // guard storage for variable arrays
-    write_guards: &mut InputArray<RwLockWriteGuard<'tensor, NdArray<F>>>, // guard storage for variable arrays
-) -> Result<(), op::OpError> {
-    let mut input_status = Ok(());
-
-    for (in_node, &in_idx) in node.in_edges.iter().zip(&node.input_indices) {
-        // `in_idx` is not 0 only when `in_node` is multi-output op and `node` selects nth value from it using `Graph::nth_tensor`.
-        let x = unsafe {
-            let input_inner: &TensorInternal<F> = in_node.get_internal(g);
-            if input_inner.is_placeholder {
-                Ok(OpInput::new(retrieve_feed(feeds, in_node.id)))
-            } else if let Some(ref lock) = input_inner.variable_array {
-                if in_node.mut_usage {
-                    write_guards.push(lock.write().unwrap());
-                    let inserted = write_guards.len() - 1;
-                    Ok(OpInput::new_mut(
-                        (*(&mut write_guards[inserted] as *mut RwLockWriteGuard<NdArray<F>>))
-                            .view_mut(),
-                    ))
-                } else {
-                    read_guards.push(lock.read().unwrap());
-                    let inserted = read_guards.len() - 1;
-                    Ok(OpInput::new(
-                        (*(&mut read_guards[inserted] as *mut RwLockReadGuard<NdArray<F>>)).view(),
-                    ))
-                }
-            } else if let Some(arr) = input_inner.get_constant_array_inner() {
-                Ok(OpInput::new(arr.view()))
-            } else {
-                // Search the value of input nodes.
-                match &node_info_map.get(&in_node.id).unwrap() {
-                    Err(e) => Err(e.clone()),
-                    Ok(vi_list) => Ok(OpInput::new(storage.get(input_inner, vi_list[in_idx]))),
-                }
-            }
-        };
-        match x {
-            Ok(x) => input_values.push(x),
-            Err(e) => {
-                input_status = Err(e);
-                break;
-            }
+            Ok(value_info_list)
         }
+        Err(e) => Err(e),
     }
-    input_status
 }
 
-impl<F: Float> Graph<F> {
+impl<'e, 'n, F: Float> Graph<'e, 'n, F> {
     /// Evaluates given symbolic tensors as a list of `ndarray::Array<F, ndarray::IxDyn>`.
     ///
     /// Unlike [Tensor::eval](tensor/struct.Tensor.html#method.eval), this function
@@ -335,7 +274,8 @@ impl<F: Float> Graph<F> {
     /// use ndarray::array;
     /// use autograd as ag;
     ///
-    /// ag::with(|g| {
+    /// let mut ctx = ag::VariableEnvironment::<f32>::new();
+    /// ctx.run(|g| {
     ///     let a = g.zeros(&[2]);
     ///     let b = g.ones(&[2]);
     ///
@@ -353,57 +293,178 @@ impl<F: Float> Graph<F> {
     where
         A: AsRef<Tensor<'scope, F>> + Copy,
     {
+        self.inner.eval(tensors, feeds, self.env_handle)
+    }
+}
+
+struct VariableGuardRegister<'v, F: Float> {
+    immutable: Vec<Option<UnsafeCell<Ref<'v, NdArray<F>>>>>,
+    mutable: Vec<Option<UnsafeCell<RefMut<'v, NdArray<F>>>>>,
+}
+
+impl<'v, 'e, F: Float> VariableGuardRegister<'v, F> {
+    fn new(max_size: usize) -> Self {
+        let mut immutable = Vec::with_capacity(max_size);
+        let mut mutable = Vec::with_capacity(max_size);
+        // init with None
+        for _ in 0..max_size {
+            immutable.push(None);
+            mutable.push(None);
+        }
+        Self { immutable, mutable }
+    }
+
+    fn set(&mut self, vid: VariableID, mut_usage: bool, env: &'v VariableEnvironment<'e, F>) {
+        if mut_usage {
+            debug_assert!(
+                self.mutable[vid.0].is_none(),
+                "Bad op impl: taking a variable"
+            );
+            self.mutable[vid.0] = Some(UnsafeCell::new(env.variable_vec[vid.0].borrow_mut()));
+        } else {
+            debug_assert!(self.immutable[vid.0].is_none(), "Bad op impl");
+            self.immutable[vid.0] = Some(UnsafeCell::new(env.variable_vec[vid.0].borrow()));
+        }
+    }
+
+    fn borrow(&self, vid: VariableID, mut_usage: bool) -> OpInput<'v, F> {
+        unsafe {
+            if mut_usage {
+                OpInput::new_mut(
+                    (*self.mutable[vid.0]
+                        .as_ref()
+                        .expect("`set` is not called with this VariableID")
+                        .get())
+                    .view_mut(),
+                )
+            } else {
+                OpInput::new(
+                    (*self.immutable[vid.0]
+                        .as_ref()
+                        .expect("`set` is not called with this VariableID")
+                        .get())
+                    .view(),
+                )
+            }
+        }
+    }
+
+    fn unset(&mut self, vid: VariableID, mut_usage: bool) {
+        if mut_usage {
+            self.mutable[vid.0] = None;
+        } else {
+            self.immutable[vid.0] = None;
+        }
+    }
+}
+
+impl<F: Float> GraphRepr<F> {
+    fn eval<'feed, 'tensor, 'g, A>(
+        &'g self,
+        tensors: &'tensor [A],
+        feeds: &[Feed<'feed, F>],
+        ctx: &VariableEnvironment<F>,
+    ) -> Vec<Result<NdArray<F>, crate::EvalError>>
+    where
+        A: AsRef<Tensor<'g, F>> + Copy,
+    {
         let mut node_info_map: FxHashMap<usize, Result<op::OutputArray<ValueInfo>, op::OpError>> =
             FxHashMap::default();
 
         // Storage in which compute results are stored. Accessed through UnsafeCell.
         let storage = OutputStorage::new();
 
-        let mut dfs_stack = Vec::<(&TensorInternal<F>, bool)>::with_capacity(100);
-        unsafe {
-            for t in tensors.iter() {
-                dfs_stack.push((t.as_ref().inner(), false));
-            }
+        let mut variable_guard_register = VariableGuardRegister::new(ctx.variable_vec.len());
 
-            while let Some((node, is_parent)) = dfs_stack.pop() {
+        // Vec<(node_id, is_parent)>
+        let mut dfs_stack = Vec::<(usize, bool)>::with_capacity(1 << 10);
+
+        for t in tensors.iter() {
+            crate::graph::assert_same_graph(self, t.as_ref().graph);
+            dfs_stack.push((t.as_ref().id(), false));
+        }
+
+        while let Some((node_id, is_parent)) = dfs_stack.pop() {
+            unsafe {
+                //  in this block, relocation of Graph::node_set's contents must not be occurred
+                let node = self.access_inner(node_id);
                 if is_parent {
                     if would_not_visit(node, &node_info_map) {
                         continue;
                     }
 
+                    // =====================================================================================
                     // Aggregate input values for `node`. if any of the inputs failed, it's a total failure.
-                    let mut xs = InputArray::new();
-                    let (mut write_guards, mut read_guards) =
-                        (InputArray::new(), InputArray::new());
-                    let input_status = aggregate_op_inputs(
-                        node,
-                        self,
-                        &node_info_map,
-                        feeds,
-                        &storage,
-                        &mut xs,
-                        &mut read_guards,
-                        &mut write_guards,
-                    );
+                    // =====================================================================================
 
-                    // run compute if `node`'s inputs were not failed
+                    let mut xs = InputArray::new();
+
+                    let mut input_status = Ok(());
+
+                    // Save var guards
+                    for (in_node, _) in node.in_edges.iter().zip(&node.input_indices) {
+                        if let Some(vid) = in_node.variable_id(self) {
+                            // is variable array
+                            variable_guard_register.set(vid, in_node.mut_usage, ctx);
+                        }
+                    }
+
+                    for (in_node, &in_idx) in node.in_edges.iter().zip(&node.input_indices) {
+                        // `in_idx` is not 0 only when `in_node` is multi-output op and `node` selects nth value from it using `Graph::nth_tensor`.
+                        let x = {
+                            if in_node.is_placeholder(self) {
+                                Ok(OpInput::new(retrieve_feed(feeds, in_node.id)))
+                            } else if let Some(vid) = in_node.variable_id(self) {
+                                // is variable array
+                                Ok(variable_guard_register.borrow(vid, in_node.mut_usage))
+                            } else {
+                                // Search the value of input nodes.
+                                match &node_info_map.get(&in_node.id).unwrap() {
+                                    Err(e) => Err(e.clone()),
+                                    Ok(vi_list) => Ok(OpInput::new(storage.get(vi_list[in_idx]))),
+                                }
+                            }
+                        };
+                        match x {
+                            Ok(x) => xs.push(x),
+                            Err(e) => {
+                                input_status = Err(e);
+                                break;
+                            }
+                        }
+                    }
+
+                    // ====================================================
+                    // Run Op::compute() if `node`'s inputs were not failed
+                    // ====================================================
+
                     let installed_node_info = input_status.and_then(|()| {
                         let mut ctx = ComputeContext::new(node, xs);
-                        node.get_op().compute(&mut ctx);
-                        let ys = ctx.extract_outputs();
-                        debug_assert!(!ys.is_empty(), "Bad op implementation: empty return value");
+                        let status = node.get_op().compute(&mut ctx);
+                        let ret = status.map(|()| ctx.ys);
                         // register compute result
-                        install_compute_results(ys, &storage)
+                        let results = install_compute_results(ret, &storage);
+                        results
                     });
-                    node_info_map.insert(node.id(), installed_node_info);
+
+                    // Release var guards
+                    for (in_node, _) in node.in_edges.iter().zip(&node.input_indices) {
+                        if let Some(vid) = in_node.variable_id(self) {
+                            // is variable array
+                            variable_guard_register.unset(vid, in_node.mut_usage);
+                        }
+                    }
+
+                    // Cache the result
+                    node_info_map.insert(node_id, installed_node_info);
                 } else {
                     // Update dfs stack
-                    dfs_stack.push((node, true));
+                    dfs_stack.push((node_id, true));
                     // Push children if needed
                     for child in &node.in_edges {
-                        let child = child.get_internal(self);
+                        let child = self.access_inner(child.id);
                         if !would_not_visit(child, &node_info_map) {
-                            dfs_stack.push((child, false));
+                            dfs_stack.push((child.id, false));
                         }
                     }
                 }
@@ -414,11 +475,14 @@ impl<F: Float> Graph<F> {
         let mut ret = Vec::with_capacity(tensors.len());
         for t in tensors {
             let t = t.as_ref();
-            let arr = if let Some(per) = t.clone_persistent_array() {
-                Ok(per)
+            let arr = if let Some(vid) = t.get_variable_id() {
+                // case 1: variable tensor
+                Ok(ctx.variable_vec[vid.0].clone().into_inner())
             } else if t.is_placeholder() {
+                // case 2: placeholder tensor
                 Ok(retrieve_feed(feeds, t.id()).to_owned())
             } else {
+                // case 3: normal tensor
                 match &node_info_map.get(&t.id()).unwrap() {
                     Ok(value_info_list) => match value_info_list[0] {
                         ValueInfo {
@@ -429,10 +493,6 @@ impl<F: Float> Graph<F> {
                             ty: ValueType::View,
                             key,
                         } => Ok(storage.get_from_view(key).to_owned()),
-                        ValueInfo {
-                            ty: ValueType::Empty,
-                            key: _,
-                        } => Err(crate::EvalError::Empty),
                     },
                     Err(e) => {
                         // convert to EvalError
@@ -451,53 +511,59 @@ fn would_not_visit<F: Float>(
     node: &TensorInternal<F>,
     info_map: &FxHashMap<usize, Result<op::OutputArray<ValueInfo>, op::OpError>>,
 ) -> bool {
-    node.is_placeholder || node.has_persistent_array || info_map.contains_key(&node.id())
+    node.is_placeholder || node.is_variable() || info_map.contains_key(&node.id())
 }
 
 #[test]
 fn test_eval2() {
-    crate::with(|g: &mut crate::Graph<f32>| {
+    let mut ctx = crate::VariableEnvironment::new();
+    ctx.run(|g: &mut Graph<f32>| {
         let a = g.ones(&[1, 1]);
         let b = g.sigmoid(a);
-        b.eval(&[]).unwrap();
+        b.eval(&[], g).unwrap();
     })
 }
 
 #[test]
 fn test_eval() {
-    crate::with(|g| {
+    let mut ctx = VariableEnvironment::new();
+    ctx.run(|g| {
         let v: Tensor<f32> = g.placeholder(&[3, 2, 1]);
         let z = g.reduce_sum(g.squeeze(v, &[2]), &[0, 1], false);
-        let g = g.grad(&[z], &[v]);
-        let eval_result = g[0].eval(&[v.given(crate::ndarray_ext::ones(&[3, 2, 1]).view())]);
+        let grad = g.grad(&[z], &[v]);
+        let eval_result = grad[0].eval(&[v.given(crate::ndarray_ext::ones(&[3, 2, 1]).view())], g);
         assert_eq!(eval_result.as_ref().unwrap().shape(), &[3, 2, 1]);
     })
 }
 
 #[test]
 fn test_variable_eval() {
-    use crate::tensor::Variable;
-    crate::with(|g| {
-        let arr = ndarray::arr1(&[0., 0., 0.]).into_dyn();
-        assert_eq!(Ok(arr.clone()), g.variable(arr).eval(&[]));
+    let mut ctx = VariableEnvironment::new();
+    let arr = ndarray::arr1(&[0., 0., 0.]).into_dyn();
+    let arr_clone = ndarray::arr1(&[0., 0., 0.]).into_dyn();
+    let a = ctx.slot().set(arr);
+    ctx.run(|g| {
+        let av = g.variable_by_id(a);
+        assert_eq!(Ok(arr_clone), av.eval(&[], g));
     });
 }
 
 #[test]
 fn test_constant_eval() {
-    use crate::tensor::Constant;
-    crate::with(|g| {
+    let mut ctx = VariableEnvironment::new();
+    ctx.run(|g| {
         let arr = ndarray::arr1(&[0., 0., 0.]).into_dyn();
-        assert_eq!(Ok(arr.clone()), g.constant(arr).eval(&[]));
+        assert_eq!(Ok(arr.clone()), g.convert_to_tensor(arr).eval(&[], g));
     });
 }
 
 #[test]
 fn test_placeholder_eval() {
-    crate::with(|g| {
+    let mut ctx = VariableEnvironment::new();
+    ctx.run(|g| {
         let arr: NdArray<f32> = crate::ndarray_ext::ones(&[3, 2, 1]);
         let v = g.placeholder(&[3, 2, 1]);
-        let eval_result = v.eval(&[v.given(arr.view())]);
+        let eval_result = v.eval(&[v.given(arr.view())], g);
         assert_eq!(Ok(arr), eval_result);
     });
 }

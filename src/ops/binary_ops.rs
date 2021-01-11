@@ -2,7 +2,7 @@ use crate::ndarray_ext::{NdArray, NdArrayView};
 use crate::op;
 use crate::tensor::Tensor;
 use crate::Float;
-use crate::Graph;
+use crate::GraphRepr;
 /// Implement +, -, *, / operators for Tensor
 /// +=, -=, *=, /= are provided as methods of c.inplace_*.
 /// *=, /= don't propagate gradients.
@@ -38,7 +38,7 @@ macro_rules! bin_op_same_shape {
 }
 
 impl<T: Float> op::Op<T> for MaybeReduce {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let input = ctx.input(0);
         let target_shape__ = crate::ndarray_ext::as_shape(&ctx.input(1));
         let target_shape = target_shape__.as_slice();
@@ -78,10 +78,9 @@ impl<T: Float> op::Op<T> for MaybeReduce {
                             );
                         }
                     } else {
-                        ctx.set_error(op::OpError::IncompatibleShape(
+                        return Err(op::OpError::IncompatibleShape(
                             "Incorrect gradient shape".to_string(),
                         ));
-                        return;
                     }
                 }
                 // case of x_axis < gy_axis: unreachable
@@ -91,13 +90,15 @@ impl<T: Float> op::Op<T> for MaybeReduce {
             let ret = folded.unwrap();
             debug_assert_eq!(target_shape, ret.shape());
             ctx.append_output(ret);
-        };
+        }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
         let g = ctx.graph();
-        let gx = Tensor::builder()
-            .set_ro_inputs(&[&ctx.output_grad(), &g.shape(ctx.input(0))])
+        let gx = Tensor::builder(ctx.graph())
+            .append_input(&ctx.output_grad(), false)
+            .append_input(&g.shape(ctx.input(0)), false)
             .build(g, MaybeBroadcast);
         ctx.append_input_grad(Some(gx));
         ctx.append_input_grad(None);
@@ -106,7 +107,7 @@ impl<T: Float> op::Op<T> for MaybeReduce {
 
 // Do broadcast if necessary.
 impl<T: Float> op::Op<T> for MaybeBroadcast {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let target_shape_ = ctx.input(1);
         let target_shape_ = crate::ndarray_ext::as_shape(&target_shape_);
         let target_shape = target_shape_.as_slice();
@@ -114,7 +115,7 @@ impl<T: Float> op::Op<T> for MaybeBroadcast {
         let raw_input = ctx.input(0);
         if raw_input.shape() == target_shape {
             ctx.append_output_view(raw_input);
-            return;
+            return Ok(());
         }
 
         // make broadcast dims if needed
@@ -128,10 +129,11 @@ impl<T: Float> op::Op<T> for MaybeBroadcast {
         // do broadcast
         if let Some(ret) = input.broadcast(target_shape) {
             ctx.append_output(ret.to_owned());
+            Ok(())
         } else {
-            ctx.set_error(op::OpError::IncompatibleShape(
+            Err(op::OpError::IncompatibleShape(
                 "PreprocessBinOpGradGrad: Cant't broadcast.".to_string(),
-            ));
+            ))
         }
     }
 
@@ -144,9 +146,10 @@ impl<T: Float> op::Op<T> for MaybeBroadcast {
 }
 
 impl<T: Float> op::Op<T> for AddOp {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret = add_forward(&ctx.input(0), &ctx.input(1));
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -164,7 +167,7 @@ impl<T: Float> op::Op<T> for AddOp {
 }
 
 impl<T: Float> op::Op<T> for SubOp {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x0 = &ctx.input(0);
         let x1 = &ctx.input(1);
         let shape0: &[usize] = x0.shape();
@@ -176,7 +179,7 @@ impl<T: Float> op::Op<T> for SubOp {
         } else if shape0 == shape1 {
             #[cfg(feature = "mkl")]
             {
-                use crate::{ops::mkl_ffi::*, same_type};
+                use crate::{ops::blas_ffi::*, same_type};
                 bin_op_same_shape!(vsSub, vdSub, -, x0, x1)
             }
             #[cfg(not(feature = "mkl"))]
@@ -187,6 +190,7 @@ impl<T: Float> op::Op<T> for SubOp {
             x0 - x1
         };
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -204,9 +208,12 @@ impl<T: Float> op::Op<T> for SubOp {
 }
 
 impl<T: Float> op::Op<T> for MulOp {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        let ret = mul_forward(&ctx.input(0), &ctx.input(1));
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        let a = ctx.input(0);
+        let b = ctx.input(1);
+        let ret = mul_forward(&a, &b);
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -231,7 +238,7 @@ impl<T: Float> op::Op<T> for MulOp {
 }
 
 impl<T: Float> op::Op<T> for DivOp {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x0 = &ctx.input(0);
         let x1 = &ctx.input(1);
         let shape0: &[usize] = x0.shape();
@@ -250,7 +257,7 @@ impl<T: Float> op::Op<T> for DivOp {
         } else if shape0 == shape1 {
             #[cfg(feature = "mkl")]
             {
-                use crate::{ops::mkl_ffi::*, same_type};
+                use crate::{ops::blas_ffi::*, same_type};
                 bin_op_same_shape!(vsDiv, vdDiv, /, x0, x1)
             }
             #[cfg(not(feature = "mkl"))]
@@ -261,6 +268,7 @@ impl<T: Float> op::Op<T> for DivOp {
             x0 / x1
         };
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -285,24 +293,15 @@ impl<T: Float> op::Op<T> for DivOp {
 fn maybe_reduce<'g, T: Float>(
     target_shape: &Tensor<'g, T>,
     x: &Tensor<'g, T>,
-    graph: &'g Graph<T>,
+    graph: &'g GraphRepr<T>,
 ) -> Tensor<'g, T> {
-    Tensor::builder()
-        .set_ro_inputs(&[x, target_shape])
+    Tensor::builder(graph)
+        .append_input(x, false)
+        .append_input(target_shape, false)
         .set_shape(target_shape)
         .build(graph, MaybeReduce)
 }
 
-fn broadcast_if_necessary<'g, T: Float>(
-    target_shape: &Tensor<'g, T>,
-    x: &Tensor<'g, T>,
-    graph: &'g Graph<T>,
-) -> Tensor<'g, T> {
-    Tensor::builder()
-        .set_ro_inputs(&[x, target_shape])
-        .set_shape(target_shape)
-        .build(graph, MaybeBroadcast)
-}
 macro_rules! impl_bin_op_forward {
     ($forward_name:ident, $bin_op:tt, $vms_op:ident, $vmd_op:ident) => {
         fn $forward_name<'v, T: Float>(x0: &NdArrayView<'v, T>, x1: &NdArrayView<'v, T>) -> NdArray<T>

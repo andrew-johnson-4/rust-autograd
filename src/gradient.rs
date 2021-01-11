@@ -3,7 +3,7 @@ use crate::op::{GradientContext, InputArray};
 use crate::tensor::Tensor;
 use crate::Float;
 use crate::FxHashMap;
-use crate::Graph;
+use crate::GraphRepr;
 use std::cmp::Ordering;
 use std::collections::binary_heap::BinaryHeap;
 
@@ -34,7 +34,7 @@ impl<'g, T: Float> GradInfo<'g, T> {
     }
 
     #[inline]
-    fn accumulate_then_get(&mut self, g: &'g Graph<T>) -> Tensor<'g, T> {
+    fn accumulate_then_get(&mut self, g: &'g GraphRepr<T>) -> Tensor<'g, T> {
         if let Some(acc) = self.accumulated_grad {
             return acc;
         }
@@ -49,7 +49,7 @@ impl<'g, T: Float> GradInfo<'g, T> {
     }
 
     #[inline]
-    fn get_grad(&mut self, g: &'g Graph<T>) -> Tensor<'g, T> {
+    fn get_grad(&mut self, g: &'g GraphRepr<T>) -> Tensor<'g, T> {
         if let Some(def) = self.default_grad {
             g.tensor(def)
         } else {
@@ -80,7 +80,7 @@ fn is_wrt(node: usize, wrt: &[usize]) -> bool {
 //   1. Record all nodes that are reachable from `ys` into `ret`.
 //   2. Mark the path between `ys` and `xs` as `has_gradient`.
 fn get_between_nodes<'t, 'g, T: Float>(
-    g: &'g Graph<T>,
+    g: &'g GraphRepr<T>,
     ys: &[usize],
     wrt: &[usize],
 ) -> FxHashMap<usize, GradInfo<'g, T>> {
@@ -103,7 +103,7 @@ fn get_between_nodes<'t, 'g, T: Float>(
             dfs_stack.push((node_id, true));
             // Push children as necessary
             for i in 0..node.num_backprop_inputs() {
-                let child = node.get_backprop_input(i).as_tensor(g);
+                let child = node.get_backprop_input(i);
                 if ret.get(&node_id).is_none() {
                     if child.is_source() || !child.is_differentiable() {
                         // Add to result, but don't allow any more recursive search
@@ -136,7 +136,7 @@ pub(crate) fn symbolic_gradients<'t, 'g, T: Float>(
     ys: &[usize],
     wrt: &[usize],
     gys: &[usize],
-    g: &'g Graph<T>,
+    g: &'g GraphRepr<T>,
 ) -> Vec<Tensor<'g, T>> {
     assert_eq!(ys.len(), gys.len(), "`ys.len()` must match `gys.len()`");
 
@@ -173,7 +173,7 @@ pub(crate) fn symbolic_gradients<'t, 'g, T: Float>(
         // Register computed gradients
         let y = g.tensor(y.id);
         for i in 0..gxs.len() {
-            let x = y.get_backprop_input(i).as_tensor(g);
+            let x = y.get_backprop_input(i);
             let mut x_info = between_nodes.get_mut(&x.id).unwrap();
             if x_info.has_gradient {
                 if let Some(gx) = gxs[i] {

@@ -3,7 +3,6 @@
 //! Mainly provides `array_gen`, which is a collection of array generator functions.
 use crate::Float;
 use ndarray;
-use std::sync::{Arc, RwLock};
 
 /// alias for `ndarray::Array<T, IxDyn>`
 pub type NdArray<T> = ndarray::Array<T, ndarray::IxDyn>;
@@ -27,33 +26,6 @@ pub(crate) enum ArrRepr<'v, T: Float> {
     View(NdArrayView<'v, T>),
 }
 
-/// Helper to feed ndarrays into variable tensors.
-///
-/// Converts the input array into `ndarray::Array<F, ndarray::IxDyn>`
-/// and then simply wraps it with `Arc<RwLock<...>>`.
-///
-/// ```
-/// use autograd as ag;
-/// use ag::ndarray_ext as array;
-/// use ag::tensor::Variable;
-/// use ndarray;
-/// use std::sync::{Arc, RwLock};
-///
-/// type NdArray = ndarray::Array<f32, ndarray::IxDyn>;
-///
-/// let w_arr: Arc<RwLock<NdArray>> = array::into_shared(array::ones(&[28 * 28, 10]));
-/// ag::with(|g| {
-///     let w = g.variable(w_arr.clone());
-/// });
-///
-/// ```
-#[inline]
-pub fn into_shared<F: Float, D: ndarray::Dimension>(
-    arr: ndarray::Array<F, D>,
-) -> Arc<RwLock<NdArray<F>>> {
-    Arc::new(RwLock::new(arr.into_dyn()))
-}
-
 #[inline]
 /// This works well only for small arrays
 pub(crate) fn as_shape<T: Float>(x: &NdArrayView<T>) -> Vec<usize> {
@@ -62,13 +34,6 @@ pub(crate) fn as_shape<T: Float>(x: &NdArrayView<T>) -> Vec<usize> {
         target.push(a.to_usize().unwrap());
     }
     target
-}
-
-#[inline]
-pub(crate) fn expand_dims_view<T: Float>(x: NdArrayView<T>, axis: usize) -> NdArrayView<T> {
-    let mut shape = x.shape().to_vec();
-    shape.insert(axis, 1);
-    x.into_shape(shape).unwrap()
 }
 
 #[inline]
@@ -145,15 +110,6 @@ pub(crate) fn is_fully_transposed(strides: &[ndarray::Ixs]) -> bool {
 }
 
 #[inline]
-pub(crate) fn copy_if_not_standard<T: Float>(x: &NdArrayView<T>) -> Option<NdArray<T>> {
-    if !x.is_standard_layout() {
-        Some(deep_copy(x))
-    } else {
-        None
-    }
-}
-
-#[inline]
 pub(crate) fn deep_copy<T: Float>(x: &NdArrayView<T>) -> NdArray<T> {
     let vec = x.iter().cloned().collect::<Vec<_>>();
     // tested
@@ -193,40 +149,6 @@ pub(crate) fn shape_of<T: Float>(x: &NdArray<T>) -> NdArray<T> {
     let rank = shape.len();
     // safe unwrap
     NdArray::from_shape_vec(ndarray::IxDyn(&[rank]), shape).unwrap()
-}
-
-#[cfg(feature = "mkl")]
-#[inline]
-pub(crate) fn get_batch_ptrs_mut<A: Float, B>(
-    batch_size: usize,
-    head: *mut A,
-    whole_size: usize,
-) -> Vec<*mut B> {
-    let size_per_sample = whole_size / batch_size;
-    let mut ret = Vec::with_capacity(batch_size);
-    for i in 0..batch_size {
-        unsafe {
-            ret.push(head.offset((i * size_per_sample) as isize) as *mut B);
-        }
-    }
-    ret
-}
-
-#[cfg(feature = "mkl")]
-#[inline]
-pub(crate) fn get_batch_ptrs<A: Float, B>(
-    batch_size: usize,
-    head: *const A,
-    whole_size: usize,
-) -> Vec<*const B> {
-    let size_per_sample = whole_size / batch_size;
-    let mut ret = Vec::with_capacity(batch_size);
-    for i in 0..batch_size {
-        unsafe {
-            ret.push(head.offset((i * size_per_sample) as isize) as *const B);
-        }
-    }
-    ret
 }
 
 /// A collection of array generator functions.

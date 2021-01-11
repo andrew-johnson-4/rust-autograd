@@ -18,10 +18,11 @@ impl<T: Float, H: crate::hook::Hook<T>> HookOp<T, H> {
 }
 
 impl<T: Float, H: crate::hook::Hook<T>> op::Op<T> for HookOp<T, H> {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret = ctx.input(0);
         self.hook.call(&ret);
         ctx.append_output_view(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {

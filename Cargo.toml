@@ -18,14 +18,24 @@ ndarray = "0.12.1"
 rayon = "1.0"
 libc = "0.2"
 matrixmultiply = "0.2.2"
-intel-mkl-src = { version="0.2.5", optional = true, default-features = true }
 num-traits = "0.2"
 num = "0.3"
 rustc-hash = "1.0.1"
 smallvec = "1.2.0"
+uuid = { version = "0.8", features = ["v4"] }
+# -- blas deps
+blas-src = { version = "0.7", optional = true }
+cblas-sys = { version = "0.1.4", optional = true }
+intel-mkl-sys = { version = "0.2.0+mkl2020.1", optional = true }
+intel-mkl-src = { version = "0.6.0+mkl2020.1", feature = "mkl-static-lp64-seq", optional = true }
 
 [features]
-mkl = ["intel-mkl-src"]
+blas = []
+intel-mkl = ["intel-mkl-sys", "intel-mkl-sys"]
+accelerate = ["blas-src", "cblas-sys", "blas-src/accelerate"]
+openblas = ["blas-src", "cblas-sys", "blas-src/openblas"]
+blis = ["blas-src", "cblas-sys", "blas-src/blis"]
+netlib = ["blas-src", "cblas-sys", "blas-src/netlib"]
 
 [lib]
 name = "autograd"
@@ -43,5 +53,6 @@ path = "examples/lstm_lm.rs"
 name = "cnn_mnist"
 path = "examples/cnn_mnist.rs"
 
-#[profile.release]
-#debug = true
+[[bin]]
+name = "flamegraph_bench"
+path = "flamegraph_bench/large_graph.rs"

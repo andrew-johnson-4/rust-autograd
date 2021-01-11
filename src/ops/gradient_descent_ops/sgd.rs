@@ -11,9 +11,13 @@ impl<T: Float> SGDOp<T> {
 }
 
 impl<T: Float> crate::op::Op<T> for SGDOp<T> {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
-        ctx.input_mut(0).scaled_add(-self.lr, &ctx.input(1));
-        ctx.append_empty_output();
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
+        let coef = -self.lr;
+        let updates = ctx.input(1).map(|x| x.clone() * coef);
+        ctx.input_mut(0)
+            .zip_mut_with(&updates, |l, r| *l += r.clone());
+        ctx.append_output(updates);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {

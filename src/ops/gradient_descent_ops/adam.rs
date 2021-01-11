@@ -6,7 +6,7 @@ pub(crate) struct AdamOp<F: Float> {
 }
 
 impl<F: Float> crate::op::Op<F> for AdamOp<F> {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<F>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<F>) -> Result<(), crate::op::OpError> {
         let StaticParams { alpha, eps, b1, b2 } = self.static_params;
         let mut t = ctx.input_mut(4);
         let input1 = ctx.input(1);
@@ -31,26 +31,30 @@ impl<F: Float> crate::op::Op<F> for AdamOp<F> {
             input3
         };
 
-        // Make hat
-        let m_hat = {
+        let updates = {
             // t is not null
             let t_val = unsafe { *t.as_ptr() };
             let rhs = F::one() / (F::one() - b2.powf(t_val));
             let v_hat = new_v.mapv(move |new_v_elem| new_v_elem * rhs);
             let rhs = F::one() / (F::one() - b1.powf(t_val));
             let mut m_hat = new_m.mapv(move |new_m_elem| new_m_elem * rhs);
-            m_hat.zip_mut_with(&v_hat, move |a, &b| (*a) /= b.sqrt() + eps);
+            m_hat.zip_mut_with(&v_hat, move |a, &b| {
+                *a = -alpha * (a.clone() / (b.sqrt() + eps))
+            });
             m_hat
         };
 
         // Update t and variable
         ctx.input_mut(0)
-            .zip_mut_with(&m_hat, move |l, &r| *l -= alpha * r);
+            .zip_mut_with(&updates, move |l, &r| *l += r);
+
         unsafe {
             *t.as_mut_ptr() += F::one();
         }
 
-        ctx.append_empty_output();
+        // return updates
+        ctx.append_output(updates);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<F>) {

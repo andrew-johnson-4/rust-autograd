@@ -12,16 +12,25 @@ The aim of this crate is to show that Rust has the capability to implement effic
 Moreover, the core of this crate is quite small compared to others (due to being implemented in pure Rust and ndarray),
 therefore it might be reasonable for those who are not familiar with how this kind of library works.
 
-## Installation
-
+## Basic usage
 ``` toml
 [dependencies]
-autograd = { version = "1.1.0", features = ["mkl"] }
+autograd = "???"
 ```
-`mkl` feature is recommended to speedup linalg operations using [Intel MKL](https://software.intel.com/en-us/mkl).
 
-#### rustc version
-Tested with rustc 1.38 ..= 1.42
+## Enabling blas
+If you use basic linalg operations, especially matrix multiplications, `blas` feature would be important to speed them up. 
+``` toml
+[dependencies]
+autograd = "???", features = ["blas", "<blas-implementation-choise>"] }
+```
+
+`<blas-implementation-choise>` must be one of the following (See also [blas-src](https://github.com/blas-lapack-rs/blas-src))
+- `accelerate` macOS only
+- `blis`
+- `intel-mkl` Intel/AMD CPU only. Includes Vector Mathematics (VM) ops
+- `netlib`
+- `openblas`
 
 ## Features
 ### Lazy, lightweight tensor evaluation
@@ -41,9 +50,9 @@ ag::with(|g: &mut ag::Graph<_>| {
 ```
 
 ### Reverse-mode automatic differentiation
-There are a lot of [built-in operations](https://docs.rs/autograd/1.1.0/autograd/struct.Graph.html)
+There are a lot of [built-in operations](https://docs.rs/autograd/???/autograd/struct.Graph.html)
 that support *higher-order* derivatives, and
-you can also [define your own differentiable ops](https://docs.rs/autograd/1.1.0/autograd/op/trait.Op.html) with ndarrays easily.
+you can also [define your own differentiable ops](https://docs.rs/autograd/???/autograd/op/trait.Op.html) with ndarrays easily.
 
 Here we are just computing partial derivatives of `z = 2x^2 + 3y + 1`.
  ```rust

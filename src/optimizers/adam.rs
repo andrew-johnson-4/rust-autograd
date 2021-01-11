@@ -1,106 +1,133 @@
 //! Adam optimizer
 use crate::ops::gradient_descent_ops::adam;
-use crate::tensor::{Input, Tensor, Variable};
-use crate::Float;
-use crate::Graph;
-use crate::NdArray;
-use std::sync::{Arc, RwLock};
+use crate::tensor::Tensor;
+use crate::variable::VariableID;
+use crate::{Float, Graph, VariableEnvironment};
 
 /// Adam optimizer
 ///
-/// This implementation is based on http://arxiv.org/abs/1412.6980v8.
+/// This implementation is based on <http://arxiv.org/abs/1412.6980v8>.
 ///
 /// ```
 /// extern crate autograd as ag;
-/// use ag::tensor::Variable;
-/// use ag::ndarray_ext::into_shared;
-/// use std::sync::{Arc, RwLock};
+///
 /// use ag::optimizers::adam;
+/// use ag::variable::NamespaceTrait;
 ///
 /// // Define parameters to optimize.
+/// let mut env = ag::VariableEnvironment::new();
 /// let rng = ag::ndarray_ext::ArrayRng::<f32>::default();
-/// let w: Arc<RwLock<ag::NdArray<f32>>> = into_shared(rng.glorot_uniform(&[28 * 28, 10]));
-/// let b: Arc<RwLock<ag::NdArray<f32>>> = into_shared(ag::ndarray_ext::zeros(&[1, 10]));
-/// // Make a state of adam.
-/// let state = adam::AdamState::new(&[&w, &b]);
 ///
-/// ag::with(|g| {
-///     let w_ = g.variable(w.clone());
-///     let b_ = g.variable(b.clone());
+/// let w = env.slot().set(rng.glorot_uniform(&[28 * 28, 10]));
+/// let b = env.slot().set(ag::ndarray_ext::zeros(&[1, 10]));
 ///
-///     // some operations using w_ and b_
+/// // Adam optimizer with default params.
+/// // State arrays are created in the "my_adam" namespace.
+/// let adam = adam::Adam::default("my_adam", env.default_namespace().current_var_ids(), &mut env);
+///
+/// env.run(|g| {
+///     let w = g.variable_by_id(w);
+///     let b = g.variable_by_id(b);
+///
+///     // some operations using w and b
 ///     // let y = ...
-///     // let grads = ag::grad(&[y], &[w_, b_]);
-///
-///     // instantiate an adam optimizer with default setting.
-///     let adam = adam::Adam::<f32>::default();
+///     // let grads = g.grad(&[y], &[w, b]);
 ///
 ///     // Getting update ops of `params` using its gradients and adam.
-///     // let update_ops: &[ag::Tensor<f32>] = &adam.compute_updates(&params, &grads, &state, &g);
+///     // let updates: &[ag::Tensor<f32>] = &adam.update(&[w, b], &grads, &g);
+///
+///     // for result in &g.eval(updates, &[]) {
+///     //     println!("updates: {:?}", result.unwrap());
+///     // }
 /// });
 /// ```
 ///
-/// See also https://github.com/raskr/rust-autograd/blob/master/examples/
+/// See also <https://github.com/raskr/rust-autograd/blob/master/examples/>
 pub struct Adam<F: Float> {
     static_params: StaticParams<F>,
+    adam_namespace_name: &'static str,
 }
 
-impl<T: Float> Default for Adam<T> {
+impl<'t, 'g, 's, F: Float> Adam<F> {
     /// Instantiates `Adam` optimizer with the recommended parameters in the original paper.
-    fn default() -> Adam<T> {
+    pub fn default(
+        unique_namespace_name: &'static str,
+        var_id_list: impl IntoIterator<Item = VariableID>,
+        env_handle: &mut VariableEnvironment<F>,
+    ) -> Adam<F> {
         let static_params = StaticParams {
-            alpha: T::from(0.001).unwrap(),
-            eps: T::from(1e-08).unwrap(),
-            b1: T::from(0.9).unwrap(),
-            b2: T::from(0.999).unwrap(),
+            alpha: F::from(0.001).unwrap(),
+            eps: F::from(1e-08).unwrap(),
+            b1: F::from(0.9).unwrap(),
+            b2: F::from(0.999).unwrap(),
         };
-        Adam { static_params }
+        Adam::new(
+            static_params,
+            var_id_list,
+            env_handle,
+            unique_namespace_name,
+        )
     }
-}
 
-impl<'t, 's: 't, F: Float> Adam<F> {
-    /// Instantiates Adam from static params
-    pub fn new(static_params: StaticParams<F>) -> Self {
-        Adam { static_params }
+    /// Instantiates `Adam` optimizer with given params.
+    pub fn new(
+        static_params: StaticParams<F>,
+        var_id_list: impl IntoIterator<Item = VariableID>,
+        env: &mut VariableEnvironment<F>,
+        adam_namespace_name: &'static str,
+    ) -> Adam<F> {
+        for vid in var_id_list.into_iter() {
+            let m_name = format!("{}m", vid);
+            let v_name = format!("{}v", vid);
+            let t_name = format!("{}t", vid);
+            let (m, v, t) = {
+                let target_var = env.get_variable(vid).borrow();
+                let var_shape = target_var.shape();
+                (
+                    crate::ndarray_ext::zeros(var_shape),
+                    crate::ndarray_ext::zeros(var_shape),
+                    crate::ndarray_ext::from_scalar(F::one()),
+                )
+            };
+            let mut adam_ns = env.namespace_mut(adam_namespace_name);
+            adam_ns.slot().with_name(m_name).set(m);
+            adam_ns.slot().with_name(v_name).set(v);
+            adam_ns.slot().with_name(t_name).set(t);
+        }
+        Adam {
+            static_params,
+            adam_namespace_name,
+        }
     }
 
     /// Creates ops to optimize `params` with Adam.
     ///
     /// Evaluated results of the return values will be `None`.
-    pub fn compute_updates(
-        &self,
-        params: &[Tensor<'s, F>],
-        grads: &[Tensor<'s, F>],
-        states: &AdamState<F>,
-        g: &'s Graph<F>,
-    ) -> Vec<Tensor<'s, F>> {
+    pub fn update<A, B>(&self, params: &[A], grads: &[B], g: &'g Graph<F>) -> Vec<Tensor<'g, F>>
+    where
+        A: AsRef<Tensor<'g, F>> + Copy,
+        B: AsRef<Tensor<'g, F>> + Copy,
+    {
         let num_params = params.len();
+        assert_eq!(num_params, grads.len());
         let mut ret = Vec::with_capacity(num_params);
         for i in 0..num_params {
-            let param = &params[i];
-            let a: *const RwLock<NdArray<F>> = param
-                .get_variable_array_ptr()
-                .expect("Adam requires *variables* as its inputs.");
-            let key = a as usize;
-            let state = states
-                .var2state
-                .get(&key)
-                .expect("Adam: state object wasn't fed correctly");
-            let m = g.variable(state.m.clone());
-            let v = g.variable(state.v.clone());
-            let t = g.variable(state.t.clone());
+            let param = params[i].as_ref();
+            let namespace = g.env().namespace(&self.adam_namespace_name);
+            let var_id = param.get_variable_id().expect("Got non-variable tensor");
+            let m = g.variable_by_name(&format!("{}m", var_id), &namespace);
+            let v = g.variable_by_name(&format!("{}v", var_id), &namespace);
+            let t = g.variable_by_name(&format!("{}t", var_id), &namespace);
 
             ret.push(
-                Tensor::builder()
-                    .set_inputs(&[
-                        Input::new_mut(param),
-                        Input::new(&grads[i]),
-                        Input::new_mut(&m),
-                        Input::new_mut(&v),
-                        Input::new_mut(&t),
-                    ])
+                Tensor::builder(g)
+                    .append_input(param, true)
+                    .append_input(grads[i].as_ref(), false)
+                    .append_input(&m, true)
+                    .append_input(&v, true)
+                    .append_input(&t, true)
                     .build(
-                        g,
+                        g.internal(),
                         adam::AdamOp {
                             static_params: self.static_params.clone(),
                         },
@@ -108,42 +135,6 @@ impl<'t, 's: 't, F: Float> Adam<F> {
             );
         }
         ret
-    }
-}
-
-struct StateArrays<F: Float> {
-    m: Arc<RwLock<NdArray<F>>>,
-    v: Arc<RwLock<NdArray<F>>>,
-    t: Arc<RwLock<NdArray<F>>>,
-}
-
-/// A state object for an adam optimizer.
-pub struct AdamState<F: Float> {
-    // map key is the address of a variable array on the heap
-    var2state: crate::FxHashMap<usize, StateArrays<F>>,
-}
-
-impl<F: Float> AdamState<F> {
-    /// Creates a new state object for an adam optimizer.
-    ///
-    /// `variables` should be variable arrays fed to `autograd::variable`.
-    pub fn new(variables: &[&Arc<RwLock<NdArray<F>>>]) -> Self {
-        let mut map = crate::FxHashMap::default();
-        for &var in variables {
-            // Use the address on the heap as a hash key
-            let key = ((&**var) as *const RwLock<_>) as usize;
-            let var = var.read().unwrap();
-            let var_shape = var.shape();
-            map.insert(
-                key,
-                StateArrays {
-                    m: Arc::new(RwLock::new(crate::ndarray_ext::zeros(var_shape))),
-                    v: Arc::new(RwLock::new(crate::ndarray_ext::zeros(var_shape))),
-                    t: Arc::new(RwLock::new(crate::ndarray_ext::from_scalar(F::one()))),
-                },
-            );
-        }
-        Self { var2state: map }
     }
 }
 

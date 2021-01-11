@@ -4,7 +4,7 @@ use crate::ndarray_ext;
 use crate::ndarray_ext::NdArrayViewMut;
 use crate::ndarray_ext::{NdArray, NdArrayView};
 use crate::op;
-use crate::tensor::{Input, Tensor};
+use crate::tensor::Tensor;
 use crate::Float;
 use std::iter::FromIterator;
 
@@ -88,7 +88,7 @@ pub struct Reshape;
 pub struct InferBinOpShape;
 
 impl<T: Float> op::Op<T> for InferBinOpShape {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let a_shape_float = ctx.input(0);
         let b_shape_float = ctx.input(1);
         let a_shape = a_shape_float.map(|x| x.to_usize().unwrap()).into_raw_vec();
@@ -100,9 +100,9 @@ impl<T: Float> op::Op<T> for InferBinOpShape {
             let a_rank = a_shape.len();
             let b_rank = b_shape.len();
             if a_rank != b_rank {
-                ctx.set_error(op::OpError::IncompatibleShape(
+                return Err(op::OpError::IncompatibleShape(
                     "InferBinOpShape: rank of lhs and rhs must match.".to_string(),
-                ))
+                ));
             }
             let max = a_shape
                 .iter()
@@ -115,6 +115,7 @@ impl<T: Float> op::Op<T> for InferBinOpShape {
         } else {
             ctx.append_output_view(b_shape_float);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -124,10 +125,11 @@ impl<T: Float> op::Op<T> for InferBinOpShape {
 }
 
 impl<T: Float> op::Op<T> for Shape {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = &ctx.input(0);
         let ret = ndarray_ext::shape_of_view(x);
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -136,10 +138,11 @@ impl<T: Float> op::Op<T> for Shape {
 }
 
 impl<T: Float> op::Op<T> for Rank {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = ctx.input(0);
         let ret = NdArray::from_elem(ndarray::IxDyn(&[]), T::from(x.ndim()).unwrap());
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -148,10 +151,11 @@ impl<T: Float> op::Op<T> for Rank {
 }
 
 impl<T: Float> op::Op<T> for Size {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = ctx.input(0);
         let ret = NdArray::from_elem(ndarray::IxDyn(&[]), T::from(x.len()).unwrap());
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -160,7 +164,7 @@ impl<T: Float> op::Op<T> for Size {
 }
 
 impl<T: Float> op::Op<T> for Reshape {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = &ctx.input(0);
         let shape_arr = &ctx.input(1);
         let target = shape_arr
@@ -184,7 +188,7 @@ impl<T: Float> op::Op<T> for Reshape {
                 if let Ok(a) = copy.into_shape(ndarray::IxDyn(target.as_slice())) {
                     ctx.append_output(a);
                 } else {
-                    ctx.set_error(op::OpError::IncompatibleShape(format!(
+                    return Err(op::OpError::IncompatibleShape(format!(
                         "reshape failed: {:?} vs {:?}",
                         x.shape(),
                         target
@@ -196,20 +200,22 @@ impl<T: Float> op::Op<T> for Reshape {
         {
             ctx.append_output(a)
         } else {
-            ctx.set_error(op::OpError::IncompatibleShape(format!(
+            return Err(op::OpError::IncompatibleShape(format!(
                 "reshape failed: {:?} vs {:?}",
                 x.shape(),
                 target
             )));
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
         let scope = ctx.graph();
         let gy = ctx.output_grad();
         let x = ctx.input(0);
-        let gx = Tensor::builder()
-            .set_ro_inputs(&[&gy, &scope.shape(&x)])
+        let gx = Tensor::builder(ctx.graph())
+            .append_input(gy, false)
+            .append_input(scope.shape(&x), false)
             .build(scope, Reshape);
         ctx.append_input_grad(Some(gx));
         ctx.append_input_grad(None);
@@ -217,7 +223,7 @@ impl<T: Float> op::Op<T> for Reshape {
 }
 
 impl<T: Float> op::Op<T> for SetDiff1D {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x0 = ctx.input(0);
         let x1 = &ctx.input(1);
 
@@ -247,6 +253,7 @@ impl<T: Float> op::Op<T> for SetDiff1D {
         // safe unwrap
         let ret = NdArray::from_shape_vec(ndarray::IxDyn(&[len]), vec).unwrap();
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -256,7 +263,7 @@ impl<T: Float> op::Op<T> for SetDiff1D {
 }
 
 impl<T: Float> op::Op<T> for IndexOp {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = ctx.input(0);
         let i = if self.index < 0 {
             ((x.len() as isize) + self.index) as usize
@@ -267,13 +274,14 @@ impl<T: Float> op::Op<T> for IndexOp {
         let flat_x = x.view().into_shape(x.len()).unwrap();
         if let Some(ret) = flat_x.get(i) {
             ctx.append_output(ndarray::arr0(*ret).into_dyn());
+            Ok(())
         } else {
-            ctx.set_error(op::OpError::OutOfBounds(format!(
+            Err(op::OpError::OutOfBounds(format!(
                 "access_elem: tried to access index {} in tensor of length {} (shape: {:?})",
                 i,
                 x.len(),
                 x.shape(),
-            )));
+            )))
         }
     }
 
@@ -282,16 +290,17 @@ impl<T: Float> op::Op<T> for IndexOp {
         let scope = ctx.graph();
         let x = ctx.input(0);
         let gy = ctx.output_grad();
-        let gx = Tensor::builder()
+        let gx = Tensor::builder(ctx.graph())
             .set_shape(&scope.shape(x))
-            .set_ro_inputs(&[&x, &gy])
+            .append_input(&x, false)
+            .append_input(&gy, false)
             .build(scope, op);
         ctx.append_input_grad(Some(gx));
     }
 }
 
 impl<T: Float> op::Op<T> for IndexOpGrad {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = ctx.input(0);
         let gy = &ctx.input(1);
         let mut result = NdArray::zeros(x.shape());
@@ -310,15 +319,15 @@ impl<T: Float> op::Op<T> for IndexOpGrad {
         {
             *a = gy[ndarray::IxDyn(&[])];
         } else {
-            ctx.set_error(op::OpError::OutOfBounds(format!(
+            return Err(op::OpError::OutOfBounds(format!(
                 "access_elem: tried to access index {} in tensor of length {} (shape: {:?})",
                 i,
                 x.len(),
                 x.shape(),
             )));
-            return;
         }
         ctx.append_output(result);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -327,7 +336,7 @@ impl<T: Float> op::Op<T> for IndexOpGrad {
 }
 
 impl<T: Float> op::Op<T> for Gather {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let param = &ctx.input(1);
         let indices = &ctx.input(0);
         let indices_shape = indices.shape();
@@ -356,6 +365,7 @@ impl<T: Float> op::Op<T> for Gather {
         let selected = param.select(ndarray::Axis(axis), flat_indices.as_slice());
         let ret = selected.into_shape(output_shape.as_slice()).unwrap();
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -363,8 +373,10 @@ impl<T: Float> op::Op<T> for Gather {
         let x = ctx.input(0);
         let x1 = ctx.input(1);
         let gy = ctx.output_grad();
-        let gx = Tensor::builder()
-            .set_ro_inputs(&[&x, &x1, &gy])
+        let gx = Tensor::builder(ctx.graph())
+            .append_input(&x, false)
+            .append_input(&x1, false)
+            .append_input(&gy, false)
             .set_shape(&scope.shape(x))
             .build(scope, GatherGrad { axis: self.axis });
         ctx.append_input_grad(None);
@@ -373,7 +385,7 @@ impl<T: Float> op::Op<T> for Gather {
 }
 
 impl<T: Float> op::Op<T> for GatherGrad {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let indices = ctx.input(0);
         let param = &ctx.input(1);
         let param_shape = param.shape();
@@ -435,6 +447,7 @@ impl<T: Float> op::Op<T> for GatherGrad {
         }
 
         ctx.append_output(gx);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -446,7 +459,7 @@ impl<T: Float> op::Op<T> for GatherGrad {
 
 #[cfg(feature = "mkl")]
 pub(crate) fn inplace_add_impl<F: Float>(mut a: NdArrayViewMut<F>, b: &NdArrayView<F>) {
-    use crate::ops::mkl_ffi::{vdAdd, vsAdd, MklInt};
+    use crate::ops::blas_ffi::{vdAdd, vsAdd, MklInt};
     use crate::same_type;
     unsafe {
         if same_type::<F, f32>() {
@@ -472,7 +485,7 @@ pub(crate) fn inplace_add_impl<F: Float>(mut a: NdArrayViewMut<F>, b: &NdArrayVi
 }
 
 impl<T: Float> op::Op<T> for AddN {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         if 0 == ctx.num_inputs() {
             unreachable!()
         } else if 1 == ctx.num_inputs() {
@@ -495,6 +508,7 @@ impl<T: Float> op::Op<T> for AddN {
             }
             ctx.append_output(base);
         }
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -505,17 +519,19 @@ impl<T: Float> op::Op<T> for AddN {
 }
 
 impl<T: Float> op::Op<T> for Clip<T> {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret = ctx.input(0).map(move |a| a.min(self.max).max(self.min));
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
         let gy = ctx.output_grad();
         let x0 = ctx.input(0);
-        let gx = Tensor::builder()
+        let gx = Tensor::builder(ctx.graph())
             .set_shape(&ctx.graph().shape(gy))
-            .set_ro_inputs(&[&x0, &gy])
+            .append_input(&x0, false)
+            .append_input(&gy, false)
             .build(
                 ctx.graph(),
                 ClipGrad {
@@ -528,13 +544,14 @@ impl<T: Float> op::Op<T> for Clip<T> {
 }
 
 impl<T: Float> op::Op<T> for ClipGrad<T> {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let mut ret = ctx.input(0).mapv(move |x| {
             // x > min && x < max
             T::from((((x > self.min) as i32) as f32) * (((x < self.max) as i32) as f32)).unwrap()
         });
         ret *= &ctx.input(1);
         ctx.append_output(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -544,7 +561,7 @@ impl<T: Float> op::Op<T> for ClipGrad<T> {
 }
 
 impl<T: Float> op::Op<T> for Concat {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let mut views = vec![];
         for i in 0..ctx.num_inputs() {
             views.push(ctx.input(i));
@@ -559,40 +576,41 @@ impl<T: Float> op::Op<T> for Concat {
         match ndarray::stack(ndarray::Axis(axis), views.as_slice()) {
             Ok(y) => {
                 ctx.append_output(y);
+                Ok(())
             }
-            Err(e) => {
-                ctx.set_error(op::OpError::NdArrayError("concat".to_string(), e));
-            }
+            Err(e) => Err(op::OpError::NdArrayError("concat".to_string(), e)),
         }
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
         // [x1, x2, x3, ..., gy]
         let num_inputs = ctx.num_inputs();
-        let mut merged_inputs = Vec::with_capacity(num_inputs + 1);
-        merged_inputs.push(Input::new(&ctx.output_grad()));
-        for i in 0..num_inputs {
-            merged_inputs.push(Input::new(&ctx.input(i)));
-        }
+
+        let inputs = ctx.inputs();
 
         for i in 0..num_inputs {
-            let gx = Tensor::builder()
+            let mut builder = Tensor::builder(ctx.graph())
                 .set_shape(&ctx.graph().shape(ctx.input(0)))
-                .set_inputs(merged_inputs.as_slice())
-                .build(
-                    ctx.graph(),
-                    ConcatGrad {
-                        index: i,
-                        axis: self.axis,
-                    },
-                );
+                .append_input(&ctx.output_grad(), false);
+
+            for input in inputs.iter() {
+                builder = builder.append_input(input, false);
+            }
+
+            let gx = builder.build(
+                ctx.graph(),
+                ConcatGrad {
+                    index: i,
+                    axis: self.axis,
+                },
+            );
             ctx.append_input_grad(Some(gx));
         }
     }
 }
 
 impl<T: Float> op::Op<T> for ConcatGrad {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let gy = ctx.input(0);
 
         let axis = if self.axis < 0 {
@@ -633,10 +651,9 @@ impl<T: Float> op::Op<T> for ConcatGrad {
                 // do slice
                 let ret = gy.clone().slice_move(ok.as_ref());
                 ctx.append_output_view(ret);
+                Ok(())
             }
-            Err(e) => {
-                ctx.set_error(op::OpError::NdArrayError("ConcatGrad: ".to_string(), e));
-            }
+            Err(e) => Err(op::OpError::NdArrayError("ConcatGrad: ".to_string(), e)),
         }
     }
 
@@ -648,17 +665,16 @@ impl<T: Float> op::Op<T> for ConcatGrad {
 }
 
 impl<T: Float> op::Op<T> for Tile {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = ctx.input(0);
         let axis = ndarray_ext::normalize_negative_axis(self.axis, x.ndim());
         let views = vec![x.clone(); self.num];
         match ndarray::stack(ndarray::Axis(axis), views.as_slice()) {
             Ok(ret) => {
                 ctx.append_output(ret);
+                Ok(())
             }
-            Err(e) => {
-                ctx.set_error(op::OpError::NdArrayError("tile: ".to_string(), e));
-            }
+            Err(e) => Err(op::OpError::NdArrayError("tile: ".to_string(), e)),
         }
     }
 
@@ -673,13 +689,14 @@ impl<T: Float> op::Op<T> for Tile {
 }
 
 impl<T: Float> op::Op<T> for Split {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = &ctx.input(0);
         let axis = ndarray_ext::normalize_negative_axis(self.axis, x.ndim());
         let mut ret = x.clone();
         let indices = make_indices_for_split(x, self.start_index, self.end_index, axis);
         ret.slice_collapse(&indices);
         ctx.append_output_view(ret);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -690,8 +707,9 @@ impl<T: Float> op::Op<T> for Split {
         };
         let x = ctx.input(0);
         let gy = ctx.output_grad();
-        let gx = Tensor::builder()
-            .set_ro_inputs(&[&x, &gy])
+        let gx = Tensor::builder(ctx.graph())
+            .append_input(&x, false)
+            .append_input(&gy, false)
             .set_shape(&ctx.graph().shape(x))
             .build(ctx.graph(), op);
         ctx.append_input_grad(Some(gx));
@@ -699,7 +717,7 @@ impl<T: Float> op::Op<T> for Split {
 }
 
 impl<T: Float> op::Op<T> for SplitGrad {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = ctx.input(0);
         let mut gx = NdArray::zeros(x.shape());
 
@@ -713,6 +731,7 @@ impl<T: Float> op::Op<T> for SplitGrad {
         )
         .zip_mut_with(&ctx.input(1), |a, &g| *a = g);
         ctx.append_output(gx);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -750,10 +769,11 @@ fn make_indices_for_split<T: Float>(
 }
 
 impl<T: Float> op::Op<T> for Slice {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let mut y = ctx.input(0);
         y.slice_collapse(&self.indices);
         ctx.append_output_view(y);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -762,8 +782,9 @@ impl<T: Float> op::Op<T> for Slice {
         };
         let x = ctx.input(0);
         let gy = ctx.output_grad();
-        let gx = Tensor::builder()
-            .set_ro_inputs(&[&x, &gy])
+        let gx = Tensor::builder(ctx.graph())
+            .append_input(&x, false)
+            .append_input(&gy, false)
             .set_shape(&ctx.graph().shape(x))
             .build(ctx.graph(), op);
         ctx.append_input_grad(Some(gx));
@@ -771,7 +792,7 @@ impl<T: Float> op::Op<T> for Slice {
 }
 
 impl<T: Float> op::Op<T> for SliceGrad {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = ctx.input(0);
         let mut gx = NdArray::zeros(x.shape());
         // sliced view
@@ -782,6 +803,7 @@ impl<T: Float> op::Op<T> for SliceGrad {
         )
         .zip_mut_with(&ctx.input(1), |a, &g| *a = g);
         ctx.append_output(gx);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -791,7 +813,7 @@ impl<T: Float> op::Op<T> for SliceGrad {
     }
 }
 impl<T: Float> op::Op<T> for Squeeze {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let mut x = ctx.input(0).clone();
         let mut axes = ctx
             .input(1)
@@ -811,6 +833,7 @@ impl<T: Float> op::Op<T> for Squeeze {
             x = x.index_axis_move(ndarray::Axis(axis), 0);
         }
         ctx.append_output_view(x);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -822,7 +845,7 @@ impl<T: Float> op::Op<T> for Squeeze {
 }
 
 impl<T: Float> op::Op<T> for ExpandDims {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let ret = ctx.input(0);
         let mut axes = ctx
             .input(1)
@@ -840,6 +863,7 @@ impl<T: Float> op::Op<T> for ExpandDims {
             output_shape.insert(axis, 1);
         }
         ctx.append_output_view(ret.into_shape(output_shape).unwrap());
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {

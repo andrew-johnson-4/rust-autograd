@@ -14,9 +14,10 @@ pub struct LogSoftmax {
 }
 
 impl<T: Float> op::Op<T> for LogSoftmax {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = &ctx.input(0);
         ctx.append_output(x - &crate::ops::math_ops::logsumexp_forward(&x, self.axis, true));
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -30,7 +31,7 @@ impl<T: Float> op::Op<T> for LogSoftmax {
 }
 
 impl<T: Float> op::Op<T> for SigmoidCrossEntropy {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x: &NdArrayView<T> = &ctx.input(0);
         let t: &NdArrayView<T> = &ctx.input(1);
 
@@ -41,6 +42,7 @@ impl<T: Float> op::Op<T> for SigmoidCrossEntropy {
             x.mapv(move |a| ((-a.abs()).exp() + T::one()).ln() + max_fn(T::zero(), a));
         tmp -= &(t * x);
         ctx.append_output(tmp);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -59,7 +61,7 @@ impl<T: Float> op::Op<T> for SigmoidCrossEntropy {
 }
 
 impl<T: Float> op::Op<T> for SparseSoftmaxCrossEntropy {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let (x, t) = (&ctx.input(0), &ctx.input(1));
         let log_x: NdArray<T> = x - &ops::math_ops::logsumexp_forward(x, 1, true);
 
@@ -67,27 +69,24 @@ impl<T: Float> op::Op<T> for SparseSoftmaxCrossEntropy {
         {
             let t_shape = t.shape();
             if log_x.ndim() != 2 {
-                ctx.set_error(op::OpError::IncompatibleShape(format!(
+                return Err(op::OpError::IncompatibleShape(format!(
                     "SparseSoftmaxCrossEntropy: given first argument's ndim is not 2: shape={:?}",
                     log_x.shape()
                 )));
-                return;
             }
             let t_rank = t_shape.len();
             if t_rank == 2 {
                 // example label shape: [batch_size, 1]
                 if t_shape[1] != 1 {
-                    ctx.set_error(op::OpError::IncompatibleShape(
+                    return Err(op::OpError::IncompatibleShape(
                         format!("SparseSoftmaxCrossEntropy: second argument's shape must be (batch_size, 1) or (batch_size,). given shape={:?}", t_shape)
                     ));
-                    return;
                 }
             } else if t_rank != 1 {
                 // example label shape: [batch_size]
-                ctx.set_error(op::OpError::IncompatibleShape(
+                return Err(op::OpError::IncompatibleShape(
                     format!("SparseSoftmaxCrossEntropy: second argument's shape must be (batch_size, 1) or (batch_size,). given shape={:?}", t_shape)
                 ));
-                return;
             }
         }
 
@@ -110,6 +109,7 @@ impl<T: Float> op::Op<T> for SparseSoftmaxCrossEntropy {
 
         ctx.append_output(ret);
         ctx.append_output(log_x);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -118,8 +118,10 @@ impl<T: Float> op::Op<T> for SparseSoftmaxCrossEntropy {
         let gy = ctx.output_grad();
         let log_x = s.nth_tensor(ctx.output(), 1);
 
-        let gx1 = Tensor::builder()
-            .set_ro_inputs(&[&log_x, &t, &gy])
+        let gx1 = Tensor::builder(ctx.graph())
+            .append_input(&log_x, false)
+            .append_input(&t, false)
+            .append_input(&gy, false)
             .build(s, SparseSoftmaxCrossEntropyGrad);
 
         // gx2 won't be used in most cases.
@@ -135,7 +137,7 @@ impl<T: Float> op::Op<T> for SparseSoftmaxCrossEntropy {
 }
 
 impl<T: Float> op::Op<T> for SparseSoftmaxCrossEntropyGrad {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let log_x = &ctx.input(0); // x is softmax
         let mut x = log_x.map(|a| a.exp());
         let t = &ctx.input(1);
@@ -146,6 +148,7 @@ impl<T: Float> op::Op<T> for SparseSoftmaxCrossEntropyGrad {
         let gy = &ctx.input(2);
         x *= gy;
         ctx.append_output(x);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {
@@ -155,7 +158,7 @@ impl<T: Float> op::Op<T> for SparseSoftmaxCrossEntropyGrad {
 }
 
 impl<T: Float> op::Op<T> for SoftmaxCrossEntropy {
-    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) {
+    fn compute(&self, ctx: &mut crate::op::ComputeContext<T>) -> Result<(), crate::op::OpError> {
         let x = &ctx.input(0);
         let log_x: NdArray<T> = x - &ops::math_ops::logsumexp_forward(x, 1, true);
         // `t` must be one-hot
@@ -170,6 +173,7 @@ impl<T: Float> op::Op<T> for SoftmaxCrossEntropy {
                 .mapv(move |elem| elem * minus_one),
         );
         ctx.append_output(log_x);
+        Ok(())
     }
 
     fn grad(&self, ctx: &mut crate::op::GradientContext<T>) {

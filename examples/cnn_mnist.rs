@@ -1,12 +1,13 @@
 extern crate autograd as ag;
 extern crate ndarray;
 
-use ag::ndarray_ext as array;
 use ag::optimizers::adam;
 use ag::rand::seq::SliceRandom;
-use ag::tensor::Variable;
-use ag::Graph;
+use ag::variable::NamespaceTrait;
+use ag::{ndarray_ext as array, Graph};
 use ndarray::s;
+use std::collections::HashMap;
+use std::ops::Deref;
 use std::time::Instant;
 
 type Tensor<'graph> = ag::Tensor<'graph, f32>;
@@ -14,7 +15,7 @@ type Tensor<'graph> = ag::Tensor<'graph, f32>;
 mod mnist_data;
 
 // This is a toy convolutional network for MNIST.
-// Got 0.987 test accuracy in 350 sec on 2.7GHz Intel Core i5.
+// Got 0.987 test accuracy in 100 sec on 2.7GHz Intel Core i5.
 //
 // First, run "./download_mnist.sh" beforehand if you don't have dataset and then run
 // "cargo run --example cnn_mnist --release --features mkl" in `examples` directory.
@@ -39,14 +40,17 @@ fn conv_pool<'g>(x: Tensor<'g>, w: Tensor<'g>, b: Tensor<'g>) -> Tensor<'g> {
     x.graph().max_pool2d(y2, 2, 0, 2)
 }
 
-fn logits<'g>(x: Tensor<'g>, w: Tensor<'g>, b: Tensor<'g>) -> Tensor<'g> {
-    x.graph().matmul(x, w) + b
-}
-
-fn inputs(g: &Graph<f32>) -> (Tensor, Tensor) {
+fn inputs<'g>(g: &'g Graph<f32>) -> (Tensor<'g>, Tensor<'g>) {
     let x = g.placeholder(&[-1, 1, 28, 28]);
     let y = g.placeholder(&[-1, 1]);
     (x, y)
+}
+
+fn logits<'g>(x: Tensor<'g>, var: &HashMap<&str, Tensor<'g>>, g: &'g ag::Graph<f32>) -> Tensor<'g> {
+    let z1 = conv_pool(x, var["w1"], var["b1"]); // map to 32 channel
+    let z2 = conv_pool(z1, var["w2"], var["b2"]); // map to 64 channel
+    let z3 = g.reshape(z2, &[-1, 64 * 7 * 7]); // flatten
+    x.graph().matmul(z3, var["w3"]) + var["b3"]
 }
 
 fn get_permutation(size: usize) -> Vec<usize> {
@@ -56,6 +60,7 @@ fn get_permutation(size: usize) -> Vec<usize> {
 }
 
 fn main() {
+    // Get training data
     let ((x_train, y_train), (x_test, y_test)) = mnist_data::load();
 
     let max_epoch = 5;
@@ -64,6 +69,7 @@ fn main() {
     let num_test_samples = x_test.shape()[0];
     let num_batches = num_train_samples / batch_size as usize;
 
+    // Create training data
     let (x_train, x_test) = (
         x_train
             .into_shape(ndarray::IxDyn(&[num_train_samples, 1, 28, 28]))
@@ -73,48 +79,76 @@ fn main() {
             .unwrap(),
     );
 
-    ag::with(|g| {
-        let rng = ag::ndarray_ext::ArrayRng::<f32>::default();
-        let w1 = g.variable(rng.random_normal(&[32, 1, 3, 3], 0., 0.1));
-        let w2 = g.variable(rng.random_normal(&[64, 32, 3, 3], 0., 0.1));
-        let w3 = g.variable(rng.glorot_uniform(&[64 * 7 * 7, 10]));
-        let b1 = g.variable(array::zeros(&[1, 32, 28, 28]));
-        let b2 = g.variable(array::zeros(&[1, 64, 14, 14]));
-        let b3 = g.variable(array::zeros(&[1, 10]));
-        let params = &[w1, w2, w3, b1, b2, b3];
-        let param_arrays = params
-            .iter()
-            .map(|v| v.get_variable_array().unwrap())
-            .collect::<Vec<_>>();
-        let adam_state = adam::AdamState::new(param_arrays.as_slice());
-        let (x, y) = inputs(g);
-        let z1 = conv_pool(x, w1, b1); // map to 32 channel
-        let z2 = conv_pool(z1, w2, b2); // map to 64 channel
-        let z3 = g.reshape(z2, &[-1, 64 * 7 * 7]); // flatten
-        let logits = logits(z3, w3, b3); // linear
-        let loss = g.sparse_softmax_cross_entropy(&logits, &y);
-        let grads = &g.grad(&[&loss], params);
-        let update_ops: &[Tensor] =
-            &adam::Adam::default().compute_updates(params, grads, &adam_state, g);
+    // Create trainable variables
 
-        for epoch in 0..max_epoch {
-            timeit!({
-                for i in get_permutation(num_batches) {
-                    let i = i as isize * batch_size;
-                    let x_batch = x_train.slice(s![i..i + batch_size, .., .., ..]).into_dyn();
-                    let y_batch = y_train.slice(s![i..i + batch_size, ..]).into_dyn();
+    let mut env = ag::VariableEnvironment::<f32>::new();
+    let rng = ag::ndarray_ext::ArrayRng::<f32>::default();
+    env.slot()
+        .with_name("w1")
+        .set(rng.random_normal(&[32, 1, 3, 3], 0., 0.1));
+
+    env.slot()
+        .with_name("w2")
+        .set(rng.random_normal(&[64, 32, 3, 3], 0., 0.1));
+
+    env.slot()
+        .with_name("w3")
+        .set(rng.glorot_uniform(&[64 * 7 * 7, 10]));
+
+    env.slot()
+        .with_name("b1")
+        .set(array::zeros(&[1, 32, 28, 28]));
+
+    env.slot()
+        .with_name("b2")
+        .set(array::zeros(&[1, 64, 14, 14]));
+
+    env.slot().with_name("b3").set(array::zeros(&[1, 10]));
+
+    // Prepare adam optimizer
+    let adam = adam::Adam::default(
+        "my_unique_adam",
+        env.default_namespace().current_var_ids(),
+        &mut env, // mut env
+    );
+
+    // Training loop
+    for epoch in 0..max_epoch {
+        timeit!({
+            for i in get_permutation(num_batches) {
+                let i = i as isize * batch_size;
+                let x_batch = x_train.slice(s![i..i + batch_size, .., .., ..]).into_dyn();
+                let y_batch = y_train.slice(s![i..i + batch_size, ..]).into_dyn();
+
+                env.run(|g| {
+                    // make graph
+                    let ns = g.env().default_namespace();
+                    let var = g.variable_map_by_name(&ns);
+                    let (x, y) = inputs(g.deref());
+                    let logits = logits(x, &var, g.deref());
+                    let loss = g.sparse_softmax_cross_entropy(&logits, &y);
+                    let var_list: Vec<&Tensor> = var.values().collect();
+                    let grads = &g.grad(&[&loss], &var_list);
+                    let update_ops: &[Tensor] = &adam.update(&var_list, grads, g);
+
                     g.eval(update_ops, &[x.given(x_batch), y.given(y_batch)]);
-                }
-            });
+                });
+            }
             println!("finish epoch {}", epoch);
-        }
+        });
+    }
 
-        // -- test --
+    // -- test --
+    env.run(|g| {
+        let ns = g.env().default_namespace();
+        let var = g.variable_map_by_name(&ns);
+        let (x, y) = inputs(g.deref());
+        let logits = logits(x, &var, g.deref());
         let predictions = g.argmax(logits, -1, true);
         let accuracy = g.reduce_mean(&g.equal(predictions, &y), &[0, 1], false);
         println!(
             "test accuracy: {:?}",
-            accuracy.eval(&[x.given(x_test.view()), y.given(y_test.view())])
+            accuracy.eval(&[x.given(x_test.view()), y.given(y_test.view())], g)
         );
-    });
+    })
 }

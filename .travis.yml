@@ -4,14 +4,8 @@ env: TYPE=default RUST_BACKTRACE=1
 
 rust:
   - "1.38.0"
-  - "1.42.0"
   - stable
   - nightly
-
-jobs:
-  allow_failures:
-    - rust: stable
-    - rust: nightly
 
 os:
   - linux
@@ -25,5 +19,10 @@ install:
   - cargo build -v
 
 script:
-  - cargo test -v
-  - cargo test -v --features mkl
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cargo test -v &&
+    cargo test -v --features blas --feature accelerate &&
+    cargo test -v --features blas --feature intel-mkl &&
+    cargo test -v --features blas --feature openblas ;fi
+  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then cargo test -v &&
+    cargo test -v --features blas --feature intel-mkl &&
+    cargo test -v --features blas --feature openblas ;fi
