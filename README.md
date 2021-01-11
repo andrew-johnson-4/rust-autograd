@@ -22,7 +22,7 @@ autograd = "???"
 If you use basic linalg operations, especially matrix multiplications, `blas` feature would be important to speed them up. 
 ``` toml
 [dependencies]
-autograd = "???", features = ["blas", "<blas-implementation-choise>"] }
+autograd = {"???", features = ["blas", "<blas-implementation-choise>"] }
 ```
 
 `<blas-implementation-choise>` must be one of the following (See also [blas-src](https://github.com/blas-lapack-rs/blas-src))

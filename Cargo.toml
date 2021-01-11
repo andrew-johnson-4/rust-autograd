@@ -53,6 +53,6 @@ path = "examples/lstm_lm.rs"
 name = "cnn_mnist"
 path = "examples/cnn_mnist.rs"
 
-[[bin]]
-name = "flamegraph_bench"
-path = "flamegraph_bench/large_graph.rs"
+#[[bin]]
+#name = "flamegraph_bench"
+#path = "flamegraph_bench/large_graph.rs"
