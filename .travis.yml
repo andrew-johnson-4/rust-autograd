@@ -7,12 +7,14 @@ rust:
   - stable
   - nightly
 
-os:
-  - linux
-  - osx
+jobs:
+  include:
+    - os: linux
+    - os: osx
+      osx_image: xcode12.2
 
 before_install:
-  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew upgrade gcc > /dev/null; fi
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install gcc8 > /dev/null; fi
 
 addons:
   apt:
@@ -28,9 +30,9 @@ install:
 
 script:
   - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cargo test -v &&
-    cargo test -v --features blas --feature accelerate &&
-    cargo test -v --features blas --feature intel-mkl &&
-    cargo test -v --features blas --feature openblas ;fi
+    cargo test -v --features blas --features accelerate &&
+    cargo test -v --features blas --features intel-mkl &&
+    cargo test -v --features blas --features openblas ;fi
   - if [ "$TRAVIS_OS_NAME" = "linux" ]; then cargo test -v &&
-    cargo test -v --features blas --feature intel-mkl &&
-    cargo test -v --features blas --feature openblas ;fi
+    cargo test -v --features blas --features intel-mkl &&
+    cargo test -v --features blas --features openblas ;fi

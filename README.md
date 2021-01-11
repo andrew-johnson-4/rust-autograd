@@ -39,13 +39,13 @@ This mechanism balances better performance and flexibility.
 ```rust
 use autograd as ag;
 
-ag::with(|g: &mut ag::Graph<_>| {
+ag::run(|g: &mut ag::Graph<_>| {
     let a: ag::Tensor<f32> = g.ones(&[60]);
     let b: ag::Tensor<f32> = g.ones(&[24]);
     let c: ag::Tensor<f32> = g.reshape(a, &[3, 4, 5]);
     let d: ag::Tensor<f32> = g.reshape(b, &[4, 3, 2]);
     let e: ag::Tensor<f32> = g.tensordot(c, d, &[1, 0], &[0, 1]);
-    e.eval(&[]);  // Getting `ndarray::Array` here.
+    let result: ag::ndarray::Array<_, _> = e.eval(&[], g).unwrap();  // Getting `ndarray::Array` here.
 });
 ```
 
@@ -56,23 +56,24 @@ you can also [define your own differentiable ops](https://docs.rs/autograd/???/a
 
 Here we are just computing partial derivatives of `z = 2x^2 + 3y + 1`.
  ```rust
-ag::with(|g: &mut ag::Graph<_>| {
+use autograd as ag;
+
+ag::run(|g: &mut ag::Graph<_>| {
     let x = g.placeholder(&[]);
     let y = g.placeholder(&[]);
     let z = 2.*x*x + 3.*y + 1.;
 
     // dz/dy
     let gy = &g.grad(&[z], &[y])[0];
-    println!("{:?}", gy.eval(&[]));   // => Ok(3.)
+    println!("{:?}", gy.eval(&[], g));   // => Ok(3.)
 
     // dz/dx (requires to fill the placeholder `x`)
     let gx = &g.grad(&[z], &[x])[0];
     let feed = ag::ndarray::arr0(2.);
-    println!("{:?}", gx.eval(&[x.given(feed.view())]));  // => Ok(8.)
-
+    println!("{:?}", gx.eval(&[x.given(feed.view())], g));  // => Ok(8.)
     // ddz/dx (differentiates `z` again)
     let ggx = &g.grad(&[gx], &[x])[0];
-    println!("{:?}", ggx.eval(&[]));  // => Ok(4.)
+    println!("{:?}", ggx.eval(&[], g));  // => Ok(4.)
 });
  ```
 
@@ -82,26 +83,32 @@ ag::with(|g: &mut ag::Graph<_>| {
  ```rust
  // This is a softmax regression for MNIST digits classification with Adam.
  // This achieves 0.918 test accuracy after 3 epochs (0.11 sec/epoch on 2.7GHz Intel Core i5).
-use autograd::{self as ag, Graph, optimizers::adam, ndarray_ext as arr, tensor::Variable};
+use autograd::{self as ag, optimizers::adam::Adam, variable::NamespaceTrait};
+
+let mut env = ag::VariableEnvironment::new();
 
 let rng = ag::ndarray_ext::ArrayRng::<f32>::default();
-let w_arr = arr::into_shared(rng.glorot_uniform(&[28 * 28, 10]));
-let b_arr = arr::into_shared(arr::zeros(&[1, 10]));
-let adam_state = adam::AdamState::new(&[&w_arr, &b_arr]);
+
+// Register variables in this env.
+// `with_name(name)` is optional but enables variable lookup using the name.
+let w = env.slot().with_name("w").set(rng.glorot_uniform(&[28 * 28, 10]));
+let b = env.slot().with_name("b").set(ag::ndarray_ext::zeros(&[1, 10]));
+
+let adam = Adam::default("my_adam", env.default_namespace().current_var_ids(), &mut env);
 
 let max_epoch = 3;
 
 for epoch in 0..max_epoch {
-    ag::with(|g| {
-        let w = g.variable(w_arr.clone());
-        let b = g.variable(b_arr.clone());
+    env.run(|g| {
+        let ns = g.env().default_namespace();
+        let var = g.variable_map_by_name(&ns);
         let x = g.placeholder(&[-1, 28*28]);
         let y = g.placeholder(&[-1]);
-        let z = g.matmul(x, w) + b;
+        let z = g.matmul(x, var["w"]) + var["b"];
         let mean_loss = g.reduce_mean(g.sparse_softmax_cross_entropy(z, &y), &[0], false);
-        let grads = &g.grad(&[&mean_loss], &[w, b]);
-        let update_ops: &[ag::Tensor<f32>] =
-            &adam::Adam::default().compute_updates(&[w, b], grads, &adam_state, g);
+        let grads = &g.grad(&[&mean_loss], &[var["w"], var["b"]]);
+        let updates: &[ag::Tensor<f32>] =
+            &adam.update(&[var["w"], var["b"]], grads, g);
 
         // let batch_size = 200isize;
         // let num_samples = x_train.shape()[0];
@@ -121,27 +128,27 @@ for epoch in 0..max_epoch {
  ### Hooks
  You can register hooks on `ag::Tensor` objects for debugging.
  ```rust
- use autograd as ag;
+use autograd as ag;
 
- ag::with(|g| {
-     let a: ag::Tensor<f32> = g.zeros(&[4, 2]).show();
-     let b: ag::Tensor<f32> = g.ones(&[2, 3]).show_shape();
-     let c = g.matmul(a, b).show_with("MatMul:");
+ag::run(|g| {
+    let a: ag::Tensor<f32> = g.zeros(&[4, 2]).show();
+    let b: ag::Tensor<f32> = g.ones(&[2, 3]).show_shape();
+    let c = g.matmul(a, b).show_with("MatMul:");
 
-     c.eval(&[]);
-     // [[0.0, 0.0],
-     // [0.0, 0.0],
-     // [0.0, 0.0],
-     // [0.0, 0.0]] shape=[4, 2], strides=[2, 1], layout=C (0x1)
-     //
-     // [2, 3]
-     //
-     // MatMul:
-     //  [[0.0, 0.0, 0.0],
-     //  [0.0, 0.0, 0.0],
-     //  [0.0, 0.0, 0.0],
-     //  [0.0, 0.0, 0.0]] shape=[4, 3], strides=[3, 1], layout=C (0x1), dynamic ndim=2
- });
+    c.eval(&[], g);
+    // [[0.0, 0.0],
+    // [0.0, 0.0],
+    // [0.0, 0.0],
+    // [0.0, 0.0]] shape=[4, 2], strides=[2, 1], layout=C (0x1)
+    //
+    // [2, 3]
+    //
+    // MatMul:
+    //  [[0.0, 0.0, 0.0],
+    //  [0.0, 0.0, 0.0],
+    //  [0.0, 0.0, 0.0],
+    //  [0.0, 0.0, 0.0]] shape=[4, 3], strides=[3, 1], layout=C (0x1), dynamic ndim=2
+});
  ```
 
 For more, see [documentation](https://docs.rs/autograd/) or
