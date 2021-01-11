@@ -2,6 +2,11 @@ language: rust
 
 env: TYPE=default RUST_BACKTRACE=1
 
+addons:
+  apt:
+    packages:
+      - gfortran
+
 rust:
   - "1.38.0"
   - stable
