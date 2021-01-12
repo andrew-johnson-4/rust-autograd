@@ -239,7 +239,7 @@ fn fast_col_x_filter_kernel<F: Float>(
     let a = y.par_iter_mut().step_by(y_size_per_batch);
     let b = cols.par_iter().step_by(col_size_per_batch);
 
-    a.zip_eq(b).for_each(move |((y, cols))| {
+    a.zip_eq(b).for_each(move |(y, cols)| {
         macro_rules! kernel_call_def {
             ($ty:ty, $f:ident) => {
                 if crate::same_type::<$ty, F>() {
