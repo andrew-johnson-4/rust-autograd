@@ -32,4 +32,5 @@ script:
   - cargo test -v
   - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cargo test -v --features blas --features accelerate; fi
   - cargo test -v --features blas --features intel-mkl
+  - gfortran --version
   - cargo test -v --features blas --features openblas
