@@ -29,10 +29,7 @@ install:
   - cargo build -v
 
 script:
-  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cargo test -v &&
-    cargo test -v --features blas --features accelerate &&
-    cargo test -v --features blas --features intel-mkl &&
-    cargo test -v --features blas --features openblas ;fi
-  - if [ "$TRAVIS_OS_NAME" = "linux" ]; then cargo test -v &&
-    cargo test -v --features blas --features intel-mkl &&
-    cargo test -v --features blas --features openblas ;fi
+  - cargo test -v
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cargo test -v --features blas --features accelerate; fi
+  - cargo test -v --features blas --features intel-mkl
+  - cargo test -v --features blas --features openblas
