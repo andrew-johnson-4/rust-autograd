@@ -1,4 +1,4 @@
-#[cfg(all(feature = "blas", not(feature = "intel-mkl")))]
+#[cfg(feature = "blas")]
 pub(crate) use crate::cblas_sys::*;
 
 #[cfg(all(feature = "blas", feature = "intel-mkl"))]

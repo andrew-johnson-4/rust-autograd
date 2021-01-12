@@ -1,8 +1,8 @@
 use crate::ndarray_ext::{NdArray, NdArrayView};
 use crate::op;
-#[cfg(feature = "intel-mkl")]
+#[cfg(all(feature = "blas", feature = "intel-mkl"))]
 use crate::ops::blas_ffi::*;
-#[cfg(feature = "intel-mkl")]
+#[cfg(all(feature = "blas", feature = "intel-mkl"))]
 use crate::same_type;
 use crate::tensor::Tensor;
 use crate::Float;
@@ -217,7 +217,7 @@ macro_rules! elem_wise_vm_or_std {
             if same_type::<T, f32>() {
                 let mut y = Vec::with_capacity(x.len());
                 $vms_op(
-                    x.len() as MklInt,
+                    x.len() as BlasIF,
                     x.as_ptr() as *const f32,
                     y.as_mut_ptr() as *mut f32,
                 );
@@ -226,7 +226,7 @@ macro_rules! elem_wise_vm_or_std {
             } else if same_type::<T, f64>() {
                 let mut y = Vec::with_capacity(x.len());
                 $vmd_op(
-                    x.len() as MklInt,
+                    x.len() as BlasIF,
                     x.as_ptr() as *const f64,
                     y.as_mut_ptr() as *mut f64,
                 );
@@ -249,7 +249,7 @@ macro_rules! elem_wise_vm_with_param_or_std {
                 let mut y = Vec::with_capacity(x.len());
                 let p = $param.to_f32().unwrap();
                 $vms_op(
-                    x.len() as MklInt,
+                    x.len() as BlasIF,
                     x.as_ptr() as *const f32,
                     p,
                     y.as_mut_ptr() as *mut f32,
@@ -260,7 +260,7 @@ macro_rules! elem_wise_vm_with_param_or_std {
                 let mut y = Vec::with_capacity(x.len());
                 let p = $param.to_f64().unwrap();
                 $vmd_op(
-                    x.len() as MklInt,
+                    x.len() as BlasIF,
                     x.as_ptr() as *const f64,
                     p,
                     y.as_mut_ptr() as *mut f64,
@@ -475,7 +475,7 @@ pub(crate) fn inplace_add_impl<F: Float>(mut a: NdArray<F>, b: &NdArray<F>) -> N
     unsafe {
         if same_type::<F, f32>() {
             vsAdd(
-                a.len() as MklInt,
+                a.len() as BlasIF,
                 a.as_ptr() as *const f32,
                 b.as_ptr() as *const f32,
                 a.as_mut_ptr() as *mut f32,
@@ -483,7 +483,7 @@ pub(crate) fn inplace_add_impl<F: Float>(mut a: NdArray<F>, b: &NdArray<F>) -> N
             return a;
         } else if same_type::<F, f64>() {
             vdAdd(
-                a.len() as MklInt,
+                a.len() as BlasIF,
                 a.as_ptr() as *const f64,
                 b.as_ptr() as *const f64,
                 a.as_mut_ptr() as *mut f64,
@@ -501,14 +501,14 @@ pub(crate) fn fast_inplace_exp_impl<F: Float>(x: &mut NdArray<F>) {
     unsafe {
         if same_type::<F, f32>() {
             vsExp(
-                x.len() as MklInt,
+                x.len() as BlasIF,
                 x.as_ptr() as *const f32,
                 x.as_mut_ptr() as *mut f32,
             );
             return;
         } else if same_type::<F, f64>() {
             vdExp(
-                x.len() as MklInt,
+                x.len() as BlasIF,
                 x.as_ptr() as *const f64,
                 x.as_mut_ptr() as *mut f64,
             );
@@ -524,14 +524,14 @@ pub(crate) fn fast_inplace_ln_impl<F: Float>(x: &mut NdArray<F>) {
     unsafe {
         if same_type::<F, f32>() {
             vsLn(
-                x.len() as MklInt,
+                x.len() as BlasIF,
                 x.as_ptr() as *const f32,
                 x.as_mut_ptr() as *mut f32,
             );
             return;
         } else if same_type::<F, f64>() {
             vdLn(
-                x.len() as MklInt,
+                x.len() as BlasIF,
                 x.as_ptr() as *const f64,
                 x.as_mut_ptr() as *mut f64,
             );

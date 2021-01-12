@@ -165,7 +165,7 @@ fn conv2d_transpose_impl<F: Float>(
                             if crate::same_type::<$ty, F>() {
                                 $f(
                                     CblasRowMajor,
-                                    CblasNoTrans,
+                                    CblasTrans,
                                     CblasNoTrans,
                                     m as BlasIF,                    // m, rows of Op(a)
                                     n as BlasIF,                    // n, cols of Op(b)
