@@ -31,7 +31,7 @@ intel-mkl-sys = { version = "0.2.0+mkl2020.1", optional = true }
 
 [features]
 blas = []
-intel-mkl = ["intel-mkl-src", "blas-sys", "intel-mkl-sys"]
+intel-mkl = ["intel-mkl-src", "cblas-sys", "intel-mkl-sys"]
 accelerate = ["blas-src", "blas-src/accelerate", "cblas-sys"]
 openblas = ["blas-src", "blas-src/openblas", "cblas-sys"]
 blis = ["blas-src", "blas-src/blis", "cblas-sys"]
