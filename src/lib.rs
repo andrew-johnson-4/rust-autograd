@@ -144,7 +144,7 @@ extern crate intel_mkl_sys;
 // For other blas impl
 #[cfg(all(feature = "blas", not(feature = "intel-mkl")))]
 extern crate blas_src;
-#[cfg(all(feature = "blas", not(feature = "intel-mkl")))]
+#[cfg(feature = "blas")]
 extern crate cblas_sys;
 
 extern crate libc;
