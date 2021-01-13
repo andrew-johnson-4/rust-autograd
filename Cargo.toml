@@ -26,7 +26,7 @@ uuid = { version = "0.8", features = ["v4"] }
 # -- blas deps
 blas-src = { version = "0.7", optional = true }
 cblas-sys = { version = "0.1.4", optional = true }
-intel-mkl-src = { version = "0.6.0+mkl2020.1", feature = "mkl-static-lp64-seq", optional = true }
+intel-mkl-src = { version = "0.6.0+mkl2020.1", feature = "mkl-dynamic-lp64-seq", optional = true }
 intel-mkl-sys = { version = "0.2.0+mkl2020.1", optional = true }
 
 [features]
