@@ -136,13 +136,13 @@
 pub extern crate ndarray;
 
 // For intel MKL
-#[cfg(all(feature = "blas", feature = "intel-mkl"))]
-extern crate intel_mkl_src;
-#[cfg(all(feature = "blas", feature = "intel-mkl"))]
-extern crate intel_mkl_sys;
+// #[cfg(all(feature = "blas", feature = "intel-mkl"))]
+// extern crate intel_mkl_src;
+// #[cfg(all(feature = "blas", feature = "intel-mkl"))]
+// extern crate intel_mkl_sys;
 
 // For other blas impl
-#[cfg(all(feature = "blas", not(feature = "intel-mkl")))]
+#[cfg(feature = "blas")]
 extern crate blas_src;
 #[cfg(feature = "blas")]
 extern crate cblas_sys;
