@@ -142,7 +142,13 @@ pub extern crate ndarray;
 // extern crate intel_mkl_sys;
 
 // For other blas impl
+<<<<<<< HEAD
 #[cfg(feature = "blas")]
+=======
+#[cfg(all(feature = "blas", feature = "openblas"))]
+extern crate openblas_src;
+#[cfg(all(feature = "blas", not(feature = "openblas")))]
+>>>>>>> 63380db4a89f2adde1daab5e277e0009b15fb3ad
 extern crate blas_src;
 #[cfg(feature = "blas")]
 extern crate cblas_sys;
