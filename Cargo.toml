@@ -25,13 +25,13 @@ smallvec = "1.2.0"
 uuid = { version = "0.8", features = ["v4"] }
 # -- blas deps
 blas-src = { version = "0.7", optional = true }
-intel-mkl-src = { version = "0.6.0+mkl2020.1", features = ["mkl-dynamic-lp64-seq"], optional = true }
+intel-mkl-src = { version = "0.6.0+mkl2020.1", optional = true }
 #openblas-src = { version = "0.9", cblas = false, lapacke = false, optional = true }
 cblas-sys = { version = "0.1.4", optional = true }
 
 [features]
 blas = []
-intel-mkl = ["intel-mkl-src", "cblas-sys"]
+intel-mkl = ["intel-mkl-src", "intel-mkl-src/mkl-dynamic-lp64-seq", "cblas-sys"]
 #openblas = ["openblas-src", "cblas-sys"]
 accelerate = ["blas-src", "blas-src/accelerate", "cblas-sys"]
 
