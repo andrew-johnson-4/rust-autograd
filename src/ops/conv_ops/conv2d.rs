@@ -83,24 +83,22 @@ fn fast_im2col_gemm_fused_kernel<F: Float>(
                 ($ty:ty, $f:ident) => {
                     // invalid type must be reported beforehand
                     if crate::same_type::<$ty, F>() {
-                        unsafe {
-                            $f(
-                                CblasRowMajor,
-                                CblasNoTrans,
-                                CblasNoTrans,
-                                m as BlasIF,                  // m, rows of Op(a)
-                                n as BlasIF,                  // n, cols of Op(b)
-                                k as BlasIF,                  // k, cols of Op(a)
-                                1.,                           // alpha
-                                filter.as_ptr() as *const _,  // a
-                                k,                            // lda
-                                cols as *const F as *const _, // b
-                                n,                            // ldb
-                                0.,                           // beta
-                                y as *mut F as *mut $ty,      // c
-                                n,                            // ldc
-                            );
-                        }
+                        $f(
+                            CblasRowMajor,
+                            CblasNoTrans,
+                            CblasNoTrans,
+                            m as BlasIF,                  // m, rows of Op(a)
+                            n as BlasIF,                  // n, cols of Op(b)
+                            k as BlasIF,                  // k, cols of Op(a)
+                            1.,                           // alpha
+                            filter.as_ptr() as *const _,  // a
+                            k,                            // lda
+                            cols as *const F as *const _, // b
+                            n,                            // ldb
+                            0.,                           // beta
+                            y as *mut F as *mut $ty,      // c
+                            n,                            // ldc
+                        );
                     }
                 };
             }
