@@ -3,7 +3,7 @@ language: rust
 env: TYPE=default RUST_BACKTRACE=1
 
 rust:
-  - "1.42.0"
+  - "1.38.0"
   - stable
   - nightly
 
@@ -13,17 +13,15 @@ jobs:
     - os: osx
       osx_image: xcode12.2
 
-before_install:
-  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install gcc@8 > /dev/null; fi
+# before_install:
+  # - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install gcc@8 > /dev/null; fi
 
-addons:
-  apt:
-    packages:
-      - gfortran
+# addons:
+  # apt:
+    # packages:
+      # - gfortran
 
 sudo: false
-
-cache: cargo
 
 install:
   - cargo build -v
@@ -32,5 +30,4 @@ script:
   - cargo test -v
   - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cargo test -v --features blas --features accelerate; fi
   - cargo test -v --features blas --features intel-mkl
-  - gfortran --version
-  - cargo test -v --features blas --features openblas
+  # - gfortran --version
