@@ -7,6 +7,7 @@ pub(crate) use crate::cblas_sys::*;
 #[cfg(feature = "blas")]
 pub(crate) enum MemoryOrder {
     C,
+    #[warn(dead_code)]
     F,
 }
 

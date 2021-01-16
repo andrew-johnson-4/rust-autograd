@@ -4,7 +4,6 @@ env: TYPE=default RUST_BACKTRACE=1
 
 rust:
   - "1.42.0"
-  - "1.48.0"
   - stable
   - nightly
 
@@ -12,18 +11,19 @@ os:
   - linux
   - osx
 
-# before_install:
-  # - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install gcc@8 > /dev/null; fi
+ before_install:
+   - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install gcc@8 > /dev/null; fi
 
-# addons:
-  # apt:
-    # packages:
-      # - gfortran
+ addons:
+   apt:
+     packages:
+       - gfortran
 
 sudo: false
 
 script:
-#  - cargo test -v
-#  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cargo test -v --features blas --features accelerate; fi
-  - cargo test -v --features blas --features intel-mkl; ls /home/travis/build/raskr/rust-autograd/target/debug/build/intel-mkl-src-*/out
-  # - gfortran --version
+  - cargo test -v
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cargo test -v --features blas --features accelerate; fi
+  # cargo test --doc with shared lib is broken https://github.com/rust-lang/cargo/issues/8531#ref-pullrequest-719728963
+  - cargo test --lib -v --features blas --features intel-mkl
+  - cargo test --lib -v --features blas --features openblas

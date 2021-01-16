@@ -273,8 +273,8 @@ fn batch_mat_mul_impl_fast<F: Float>(
         let mut rhs_strides = rhs_.strides();
 
         // copy if batch dims appear in last two dims.
-        let mut copied_lhs;
-        let mut copied_rhs;
+        let copied_lhs;
+        let copied_rhs;
         if batch_mat_mul_requires_copy(lhs_strides) {
             copied_lhs = crate::ndarray_ext::deep_copy(&lhs_);
             lhs_ = copied_lhs.view();
