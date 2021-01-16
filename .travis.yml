@@ -11,14 +11,6 @@ os:
   - linux
   - osx
 
-before_install:
-  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install gcc@8 > /dev/null; fi
-
-addons:
-  apt:
-    packages:
-      - gfortran
-
 sudo: false
 
 # cargo test --doc with shared lib is broken https://github.com/rust-lang/cargo/issues/8531#ref-pullrequest-719728963
