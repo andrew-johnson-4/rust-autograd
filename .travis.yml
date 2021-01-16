@@ -4,6 +4,7 @@ env: TYPE=default RUST_BACKTRACE=1
 
 rust:
   - "1.42.0"
+  - "1.48.0"
   - stable
   - nightly
 
@@ -22,7 +23,8 @@ os:
 sudo: false
 
 script:
-  - cargo test -v
-  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cargo test -v --features blas --features accelerate; fi
+#  - cargo test -v
+#  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cargo test -v --features blas --features accelerate; fi
+  - echo $LD_LIBRARY_PATH
   - cargo test -v --features blas --features intel-mkl
   # - gfortran --version
