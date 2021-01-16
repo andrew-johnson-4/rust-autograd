@@ -5,9 +5,9 @@ pub(crate) use crate::cblas_sys::*;
 // pub(crate) use crate::intel_mkl_sys::*;
 
 #[cfg(feature = "blas")]
+#[allow(dead_code)]
 pub(crate) enum MemoryOrder {
     C,
-    #[warn(dead_code)]
     F,
 }
 
