@@ -11,13 +11,13 @@ os:
   - linux
   - osx
 
- before_install:
-   - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install gcc@8 > /dev/null; fi
+before_install:
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then brew install gcc@8 > /dev/null; fi
 
- addons:
-   apt:
-     packages:
-       - gfortran
+addons:
+  apt:
+    packages:
+      - gfortran
 
 sudo: false
 
