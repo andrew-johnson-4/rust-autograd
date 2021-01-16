@@ -25,6 +25,5 @@ sudo: false
 script:
 #  - cargo test -v
 #  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then cargo test -v --features blas --features accelerate; fi
-  - ls /home/travis/build/raskr/rust-autograd/target/debug/build/intel-mkl-src-*/out
-  - cargo test -v --features blas --features intel-mkl
+  - cargo test -v --features blas --features intel-mkl; ls /home/travis/build/raskr/rust-autograd/target/debug/build/intel-mkl-src-*/out
   # - gfortran --version
